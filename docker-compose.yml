@@ -1,0 +1,62 @@
+services:
+  xtts:
+    image: daswer123/xtts-api-server:latest
+    container_name: xtts
+    restart: unless-stopped
+    environment:
+      - DEVICE=cuda:0                  # set to cpu if you don’t want GPU
+      - MODEL_DIR=/models
+      - HF_HOME=/models/.cache/hf      # optional cache location
+    # comment the next line if not using GPU:
+    gpus: all
+    volumes:
+      - xtts_models:/models
+      - xtts_output:/output
+      - ./voices:/voices:ro            # your reference voice WAVs live here
+    ports:
+      - "8020:8020"
+
+  xtts-glue:
+    # if you already have an image, replace `build:` with `image: xtts-glue:latest`
+    build:
+      context: ./glue
+    container_name: xtts-glue
+    restart: unless-stopped
+    environment:
+      - XTTS_URL=http://xtts:8020/tts_to_file
+      - SNAPCAST_RPC=http://snapserver:1780/jsonrpc
+      - SNAPCAST_FIFO=/run/snapcast/snapfifo
+      - VOICES_DIR=/voices
+      - XTTS_LANG=en
+      - XTTS_OUTPUT_DIR=/output
+    volumes:
+      - ./glue:/app                    # dev: hot-reload if your Dockerfile uses it
+      - ./voices:/voices:ro
+      - xtts_output:/output
+      - snapcast_run:/run/snapcast     # shared FIFO with snapserver
+    command: uvicorn app:app --host 0.0.0.0 --port 9000 --reload --reload-dir /app
+    ports:
+      - "9000:9000"
+    depends_on:
+      - xtts
+      - snapserver
+
+  snapserver:
+    image: nolte/snapcast-server:latest
+    container_name: snapserver
+    restart: unless-stopped
+    volumes:
+      - ./snapcast/snapserver.conf:/etc/snapserver.conf:ro
+      - snapcast_run:/run/snapcast     # will contain /run/snapcast/snapfifo
+      - snapcast_state:/var/lib/snapserver
+    ports:
+      - "1704:1704/udp"
+      - "1704:1704/tcp"
+      - "1705:1705/tcp"
+      - "1780:1780/tcp"
+
+volumes:
+  xtts_models:
+  xtts_output:
+  snapcast_run:
+  snapcast_state:
