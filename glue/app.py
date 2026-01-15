@@ -6,11 +6,16 @@ import tempfile
 import uuid
 import ipaddress
 import json
+import contextlib
 from typing import List, Optional, Tuple, Dict, Any
 from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Header
 from pydantic import BaseModel
+from fastapi import BackgroundTasks
+import wave
+
+from visuals import notify_visuals
 
 app = FastAPI(title="Voice Glue → Snapcast")
 
@@ -39,6 +44,8 @@ _IDEM_TTL = 60.0  # seconds
 # Optional strictness: error if explicit targets/groups resolve to 0
 STRICT_TARGET_RESOLUTION = os.getenv("STRICT_TARGET_RESOLUTION", "false").lower() in ("1","true","yes")
 
+VISUAL_PREROLL_MS = int(os.getenv("VISUAL_PREROLL_MS", "150"))
+
 # ---------- Models ----------
 class SpeakAndPushRequest(BaseModel):
     text: str
@@ -51,6 +58,8 @@ class SpeakAndPushRequest(BaseModel):
     volume_percent: Optional[int] = None         # 0..100 for target clients
     timeout_seconds: float = TTS_TIMEOUT
     dry_run: bool = False
+    visual_media: str = "/opt/argus-visual/inara.mp4"
+    visual_loop: bool = True
 
 # Legacy model for backward compatibility
 class SpeakReq(BaseModel):
@@ -157,6 +166,13 @@ def _snapshot_volumes(clients: List[dict]) -> Dict[str, Dict[str, Any]]:
         vol = (cfg.get("volume") or {})
         snap[str(c["id"])] = {"muted": bool(vol.get("muted", False)), "percent": int(vol.get("percent", 0))}
     return snap
+
+
+def _wav_duration_ms(path: str) -> int:
+    with wave.open(path, "rb") as wf:
+        frames = wf.getnframes()
+        rate = wf.getframerate() or 1
+        return int(frames * 1000 / rate)
 
 # ---------- Enhanced Snapcast helpers ----------
 async def snap_rpc(method: str, params: Optional[dict] = None) -> Any:
@@ -364,9 +380,11 @@ def tts_to_file(text: str, speaker: str) -> str:
         "language": XTTS_LANG,
         "file_name_or_path": out_path
     }
+    log.info(f"XTTS payload: {payload}")
     try:
         import requests
         r = requests.post(XTTS_URL, json=payload, timeout=REQUEST_TIMEOUT)
+        log.info(f"XTTS response: {r.json()}")
         r.raise_for_status()
         return out_path
     except Exception as e:
@@ -483,34 +501,35 @@ def speak_and_push_legacy(req: SpeakReq):
         "fifo": SNAP_FIFO
     }
 
+
+
 @app.post("/speak_and_push")
 async def speak_and_push(
     body: SpeakAndPushRequest,
     request: Request,
-    x_idempotency_key: Optional[str] = Header(default=None, convert_underscores=False)
+    x_idempotency_key: Optional[str] = Header(default=None, convert_underscores=False),
+    background_tasks: BackgroundTasks = None,
 ):
-    """Enhanced TTS → temporarily (un)mute targets → stream over Snapcast FIFO → restore volumes with advanced features."""
+    """Enhanced TTS → temporarily (un)mute targets → stream over Snapcast FIFO → restore volumes."""
     # idempotency
     if _mark_idem(x_idempotency_key or ""):
-        return {"status":"duplicate_ignored","idempotency_key": x_idempotency_key}
+        return {"status": "duplicate_ignored", "idempotency_key": x_idempotency_key}
 
     # serialize requests
     async with PLAYLOCK:
-        started = time.time()
         st = await snap_status()
         clients_all = _flatten_clients(st)
         targets, others = _pick_targets(clients_all, body.targets, body.target_groups)
 
         if not targets:
-            # If user explicitly asked for targets/groups and none matched, optionally fail fast.
             if (body.targets or body.target_groups) and STRICT_TARGET_RESOLUTION:
                 raise HTTPException(status_code=400, detail={
-                    "error":"No targets resolved",
+                    "error": "No targets resolved",
                     "targets_requested": body.targets or [],
                     "groups_requested": body.target_groups or [],
-                    "hint":"Check /snapcast/clients and /snapcast/groups for valid names/ids/MACs."
+                    "hint": "Check /snapcast/clients and /snapcast/groups for valid names/ids/MACs."
                 })
-            # Else: permissive broadcast
+            # permissive broadcast
             targets = clients_all
             others = []
 
@@ -518,85 +537,100 @@ async def speak_and_push(
         snap_before = _snapshot_volumes(clients_all)
 
         # compute target volume
-        target_vol = None
         if body.night_mode and body.volume_percent is None:
             target_vol = 30
-        elif body.volume_percent is not None:
-            target_vol = max(0, min(100, int(body.volume_percent)))
+        else:
+            target_vol = None if body.volume_percent is None else max(0, min(100, int(body.volume_percent)))
 
-        # synthesize
+        # resolve voice
         voice_path = _resolve_voice_path(body.speaker)
         if not voice_path.startswith(VOICES_DIR + os.sep):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": f"Voice path must be under {VOICES_DIR}",
-                    "speaker": body.speaker,
-                    "resolved_path": voice_path,
-                    "hint": "Use a voice name (e.g. 'female') or a filename in /voices (e.g. 'female.wav')."
-                },
-            )
-
+            raise HTTPException(status_code=400, detail={
+                "error": f"Voice path must be under {VOICES_DIR}",
+                "speaker": body.speaker,
+                "resolved_path": voice_path,
+                "hint": "Use GET /voices to list voices."
+            })
         if not os.path.isfile(voice_path):
             available = list_available_voice_names()
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": f"Voice not found: '{body.speaker}'",
-                    "resolved_path": voice_path,
-                    "available": available,
-                    "hint": "Use GET /voices to see available voices; set 'speaker' to a name (e.g. 'female') or 'name.wav'."
-                },
-            )
+            raise HTTPException(status_code=400, detail={
+                "error": f"Voice not found: '{body.speaker}'",
+                "resolved_path": voice_path,
+                "available": available
+            })
 
-        # build a dry-run preview (after validating the voice exists)
+        # dry-run preview
         preview = {
-            "targets": [{"id": c["id"], "name": c.get("config",{}).get("name") or c.get("host",{}).get("name")} for c in targets],
-            "others":  [{"id": c["id"], "name": c.get("config",{}).get("name") or c.get("host",{}).get("name")} for c in others],
+            "targets": [{"id": c["id"], "name": c.get("config", {}).get("name") or c.get("host", {}).get("name")} for c in targets],
+            "others":  [{"id": c["id"], "name": c.get("config", {}).get("name") or c.get("host", {}).get("name")} for c in others],
             "target_volume_percent": target_vol,
         }
         if body.dry_run:
-            return {"status":"dry_run", "plan": preview}
-
-        # apply mutes/volumes
+            return {"status": "dry_run", "plan": preview}
+        out_wav = None
         try:
-            # mute others
+            # 1) Mute/unmute + set volumes
             for c in others:
                 await _set_muted(c["id"], True)
-            # unmute + set volume for targets
             for c in targets:
                 await _set_muted(c["id"], False)
                 if target_vol is not None:
                     await _set_percent(c["id"], target_vol)
 
-            # pre-chime
+            # 2) Optional pre-chime (use your existing generator)
+            pre_ms = 0
             if body.pre_chime:
-                await _run_ffmpeg_to_fifo(sine=(880, 0.25))
+                pre_sec = 0.25
+                await _run_ffmpeg_to_fifo(sine=(880, pre_sec))
+                pre_ms = int(pre_sec * 1000)
 
-            # Synthesize + play
+            # 3) Synthesize speech to WAV
+            out_wav = os.path.join(OUTPUT_DIR, f"tts-{uuid.uuid4().hex}.wav")
             try:
-                out_wav = os.path.join(OUTPUT_DIR, f"tts-{uuid.uuid4().hex}.wav")
                 await _synthesize_tts_to(out_wav, body.text, voice_path, body.language, body.timeout_seconds)
-                await _run_ffmpeg_to_fifo(input_wav=out_wav)
             except HTTPException:
+                # already a formatted API error
                 raise
             except Exception as e:
-                # Fallback chime then surface as 502
+                # Fallback chimes then bubble 502
                 await _run_ffmpeg_to_fifo(sine=(660, 0.15))
                 await _run_ffmpeg_to_fifo(sine=(550, 0.15))
                 raise HTTPException(status_code=502, detail=f"TTS failed (played fallback chime): {e}")
-            finally:
-                try:
-                    os.remove(out_wav)
-                except Exception:
-                    pass
-                    
-        finally:
-            # restore everything (best effort)
-            await _restore_volumes(snap_before)
 
-        dur_ms = int((time.time() - started) * 1000)
-        return {"status":"ok", "duration_ms": dur_ms, "applied": preview}
+            # 4) Determine real duration (wav length + pre-chime + small grace)
+            try:
+                wav_ms = _wav_duration_ms(out_wav)
+            except Exception:
+                wav_ms = 0
+            grace_ms = 300
+            total_ms = pre_ms + wav_ms + grace_ms
+
+            # 5) Kick off visual in parallel (right BEFORE audio playback)
+            await notify_visuals(
+                targets=body.targets or [],
+                text=body.text,
+                duration_ms=total_ms,
+                media_override=getattr(body, "visual_media", None),
+                loop_override=getattr(body, "visual_loop", None),
+                background_tasks=None,   # <-- key change
+            )
+            # Small preroll so the screen is up before audio starts (optional)
+            if VISUAL_PREROLL_MS > 0:
+                await asyncio.sleep(VISUAL_PREROLL_MS / 1000)
+
+            # 6) Stream the actual TTS audio to Snapcast FIFO
+            await _run_ffmpeg_to_fifo(input_wav=out_wav)
+
+        finally:
+            # always attempt to restore volumes
+            await _restore_volumes(snap_before)
+            # cleanup temp file
+            with contextlib.suppress(Exception):
+                os.remove(out_wav)
+
+        return {"status": "ok", "duration_ms": total_ms, "applied": preview}
+
+
 
 @app.get("/voices")
 async def list_voices():
