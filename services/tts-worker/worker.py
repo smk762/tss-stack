@@ -46,6 +46,7 @@ REQUEST_TIMEOUT = float(env_str("REQUEST_TIMEOUT", "60"))
 XTTS_STARTUP_GRACE_SECONDS = env_int("XTTS_STARTUP_GRACE_SECONDS", 120)
 
 SNAPCAST_GLUE_URL = env_str("SNAPCAST_GLUE_URL", "http://xtts-glue:9000/play_wav")
+DEBUG_PREPROCESS_TEXT = env_str("DEBUG_PREPROCESS_TEXT", "false").lower() in ("1", "true", "yes")
 
 
 def now_iso() -> str:
@@ -472,6 +473,9 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
     if not text:
         return text
 
+    # Guardrail: XTTS-style engines can behave oddly on newlines / weird whitespace.
+    # We'll do our shaping, then normalize whitespace at the end.
+
     sentence_pause_ms = controls.get("sentence_pause_ms")
     pause_variance_ms = controls.get("pause_variance_ms")
     repeat_emphasis = controls.get("repeat_emphasis")
@@ -500,11 +504,11 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
     except Exception:
         pv = 0
 
-    # Heuristic: every "~150ms" of desired pause add one ellipsis token.
-    ellipses = max(0, min(6, round(sp / 150))) if sp > 0 else 0
-
-    # Randomness in punctuation: occasionally add an extra comma (small effect).
-    comma_prob = min(0.35, pv / 300.0) if pv > 0 else 0.0
+    # Conservative pause shaping:
+    # Avoid inserting punctuation like ",", "...", etc. Those can confuse some TTS models and cause artifacts.
+    # Instead we only add *extra whitespace* after sentence boundaries.
+    extra_space_after_sentence = 1 if sp >= 150 else 0
+    extra_space_prob = min(0.20, pv / 600.0) if pv > 0 else 0.0
 
     # Punctuation weight: 0..1.
     # - lower => reduce comma/semicolon density (less pausing)
@@ -538,28 +542,10 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
 
         text = _fix_immediate_repeats(text)
 
-    # Apply punctuation_weight conservatively:
-    # - For pw < 0.5, soften commas/semicolons/colons by turning some into spaces.
-    # - For pw > 0.7, occasionally add a comma before conjunctions to create micro-pauses.
-    if pw < 0.5:
-        # Drop a fraction of commas/semicolons/colons.
-        # Strength: pw=0 -> drop ~70%, pw=0.49 -> drop ~20%
-        drop_p = 0.2 + (0.7 - 0.2) * (1.0 - (pw / 0.5))
-        out2 = []
-        for ch in text:
-            if ch in ",;:" and random.random() < drop_p:
-                out2.append(" ")
-            else:
-                out2.append(ch)
-        text = "".join(out2)
-    elif pw > 0.7:
-        add_p = min(0.25, (pw - 0.7) / 0.3 * 0.25)  # 0..0.25
-        # Add comma before common conjunctions when there's a reasonable clause boundary.
-        text = re.sub(
-            r"(?i)(\w)(\s+)(and|but|so|or)(\s+)",
-            lambda m: f"{m.group(1)}, {m.group(3)} " if random.random() < add_p else m.group(0),
-            text,
-        )
+    # Apply punctuation_weight safely:
+    # We do NOT delete punctuation or insert commas inside clauses.
+    # Instead we scale the amount of extra sentence-boundary spacing we add.
+    boundary_space_scale = 0.5 + (pw * 1.0)  # 0.5..1.5
 
     # Sentence split aggressiveness (0..1): encourage chunking by inserting paragraph breaks.
     # This does not do multi-request synthesis; it only nudges the engine with structure.
@@ -592,20 +578,37 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
         if cur:
             chunks.append(cur)
 
-        # Join chunks with blank lines to strongly suggest a pause/breath.
+        # Join chunks without newlines; newlines can trigger odd model behavior in some engines.
         if len(chunks) > 1:
-            text = "\n\n".join(chunks)
+            glued: list[str] = []
+            for c in chunks:
+                c = c.strip()
+                if not c:
+                    continue
+                # Ensure chunk ends in sentence punctuation to help the model reset prosody.
+                if c[-1] not in ".!?":
+                    c = c + "."
+                glued.append(c)
+            text = " ".join(glued)
 
     out = []
     for ch in text:
         out.append(ch)
         if ch in ".!?":
-            if ellipses:
-                out.append(" " + ("..." * ellipses) + " ")
-            # punctuation_weight influences how often we inject extra commas near sentence ends.
-            if comma_prob and random.random() < (comma_prob * (0.5 + pw)):
-                out.append(", ")
-    return "".join(out)
+            # Extra sentence pause via whitespace only (safe).
+            if extra_space_after_sentence:
+                out.append(" " * int(round(extra_space_after_sentence * boundary_space_scale)))
+            if extra_space_prob and random.random() < extra_space_prob:
+                out.append(" ")
+
+    # Final sanitize: collapse whitespace and strip control chars/newlines.
+    cleaned = "".join(out)
+    cleaned = cleaned.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    # Avoid pathological punctuation runs.
+    cleaned = re.sub(r"\.{4,}", "...", cleaned)
+    cleaned = re.sub(r",\s*,+", ", ", cleaned)
+    return cleaned
 
 def main() -> None:
     r = redis.from_url(REDIS_URL, decode_responses=True)
@@ -637,8 +640,21 @@ def main() -> None:
 
         mark_running(job_id)
         params: Dict[str, Any] = msg.get("params") or {}
+        # Make preprocessing randomness deterministic per job unless caller provided a seed.
+        try:
+            seed = params.get("seed")
+            if seed is None:
+                seed = uuid.UUID(str(job_id)).int & 0xFFFFFFFF
+            random.seed(int(seed))
+        except Exception:
+            pass
         controls = _read_controls(params)
-        text = preprocess_text(params.get("text") or "", controls)
+        original_text = params.get("text") or ""
+        text = preprocess_text(original_text, controls)
+        if DEBUG_PREPROCESS_TEXT:
+            o = re.sub(r"\s+", " ", str(original_text)).strip()
+            p = re.sub(r"\s+", " ", str(text)).strip()
+            print(f"[tts-worker] text_preprocess job={job_id} orig_len={len(o)} proc_len={len(p)} orig='{o[:160]}' proc='{p[:160]}'")
         voice_id = params.get("voice_id") or ""
         language = params.get("language") or "en"
         fmt = params.get("output_format") or "wav"
