@@ -4,6 +4,10 @@ This document captures a **future‑proof architecture** for running **Whisper v
 
 The guiding principle: **lock stable contracts now, change engines later**.
 
+## Streaming TTS (future)
+
+For the concrete implementation checklist + staged rollout to add a **real streaming path** (so `stream_chunk_ms` can be enabled honestly), see `STREAMING_TODO.md`.
+
 ---
 
 ## 1. Lock the Contract: Stable API Between UI ↔ Backend

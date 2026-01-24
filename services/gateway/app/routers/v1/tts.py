@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
 
 from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ class TtsControls(BaseModel):
     prosody_depth: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     tempo_variance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     breathiness: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    nasality: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    nasality: Optional[float] = Field(default=None, ge=0.0, le=0.6)
     intensity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     emphasis_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     variation: Optional[float] = Field(default=None, ge=0.0, le=1.0)
@@ -36,9 +36,9 @@ class TtsControls(BaseModel):
     punctuation_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     sentence_split_aggressiveness: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     repeat_emphasis: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    post_eq_profile: Optional[str] = None
-    latency_mode: Optional[str] = None
-    stream_chunk_ms: Optional[int] = Field(default=None, ge=0, le=5000)
+    post_eq_profile: Optional[Literal["neutral", "warm", "broadcast", "crisp"]] = None
+    latency_mode: Optional[Literal["quality", "balanced", "realtime"]] = None
+    stream_chunk_ms: Optional[int] = Field(default=None, ge=40, le=400)
 
 
 class PlaybackSnapcast(BaseModel):

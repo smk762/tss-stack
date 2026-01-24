@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 import random
+import re
 from typing import Any, Dict, Optional
 
 import httpx
@@ -155,6 +156,8 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
     post_eq_profile = controls.get("post_eq_profile")
     nasality = controls.get("nasality")
     formant_shift = controls.get("formant_shift")
+    emphasis_strength = controls.get("emphasis_strength")
+    latency_mode = controls.get("latency_mode")
 
     # If nothing set, do nothing.
     if (
@@ -168,10 +171,17 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
         and post_eq_profile is None
         and nasality is None
         and formant_shift is None
+        and emphasis_strength is None
     ):
         return
 
-    filters = []
+    # Latency mode affects DSP depth/quality (best-effort). Default to balanced.
+    mode = str(latency_mode).strip().lower() if latency_mode is not None else "balanced"
+    if mode not in ("quality", "balanced", "realtime"):
+        mode = "balanced"
+
+    filters: list[str] = []
+    used_rubberband_formant = False
 
     # Pitch shift: factor = 2^(semitones/12). Use asetrate + atempo to keep duration.
     if pitch_semitones is not None:
@@ -179,7 +189,8 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
             st = float(pitch_semitones)
             st = max(-12.0, min(12.0, st))
             pf = math.pow(2.0, st / 12.0)
-            filters.append(f"asetrate=22050*{pf:.8f}")
+            # Use input sample rate (sample_rate) rather than assuming a constant.
+            filters.append(f"asetrate=sample_rate*{pf:.8f}")
             filters.append(f"atempo={1.0/pf:.8f}")
         except Exception:
             pass
@@ -226,23 +237,69 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
             filters.append("equalizer=f=6000:t=q:w=1.0:g=4")
         # neutral / unknown => no-op
 
-    # Formant shift (approximation):
-    # True formant shifting requires specialized DSP. As a safe, engine-agnostic proxy, we apply an EQ "tilt":
-    # - negative => darker/more body (boost lows, cut highs)
-    # - positive => brighter/thinner (cut lows, boost highs)
+    # Formant shift (Stage 3: "true-ish" formant processing):
+    # Use ffmpeg's `rubberband` filter, which supports `formant=shifted|preserved`.
+    #
+    # Trick to shift formants while keeping pitch about the same:
+    # - Step A: pitch-shift with formant shifted (moves pitch + formants)
+    # - Step B: reverse pitch shift with formant preserved (restores pitch, keeps shifted formants)
+    #
+    # If rubberband isn't available at runtime, we fall back to a bounded EQ tilt (Stage 2 proxy).
+    def _rubberband_chain_for_formant_shift(fs: float) -> Optional[list[str]]:
+        fs = max(-1.0, min(1.0, float(fs)))
+        if abs(fs) < 1e-6:
+            return None
+
+        # Map -1..1 to +/- 4 semitones of formant movement (audible but not grotesque).
+        semis = fs * 4.0
+        pf = math.pow(2.0, semis / 12.0)
+
+        # Quality knobs: "quality" spends more CPU; "realtime" tries to be faster.
+        if mode == "quality":
+            pitchq = "quality"
+            window = "long"
+            smoothing = "on"
+            transients = "mixed"
+        elif mode == "realtime":
+            pitchq = "speed"
+            window = "short"
+            smoothing = "off"
+            transients = "crisp"
+        else:
+            pitchq = "consistency"
+            window = "standard"
+            smoothing = "off"
+            transients = "mixed"
+
+        a = f"rubberband=pitch={pf:.8f}:formant=shifted:pitchq={pitchq}:window={window}:smoothing={smoothing}:transients={transients}"
+        b = f"rubberband=pitch={1.0/pf:.8f}:formant=preserved:pitchq={pitchq}:window={window}:smoothing={smoothing}:transients={transients}"
+        return [a, b]
+
     if formant_shift is not None:
         try:
             fs = float(formant_shift)
-            fs = max(-1.0, min(1.0, fs))
-            if abs(fs) > 1e-6:
-                # Map to gains (audible but bounded).
-                low_gain = -fs * 4.0   # +4dB when fs=-1, -4dB when fs=+1
-                high_gain = fs * 6.0   # -6dB when fs=-1, +6dB when fs=+1
-                # Two broad bands to approximate spectral envelope tilt.
-                filters.append(f"equalizer=f=180:t=q:w=0.8:g={low_gain:.2f}")
-                filters.append(f"equalizer=f=6500:t=q:w=0.9:g={high_gain:.2f}")
+            rb = _rubberband_chain_for_formant_shift(fs)
+            if rb:
+                filters.extend(rb)
+                used_rubberband_formant = True
+            else:
+                # no-op
+                pass
         except Exception:
-            pass
+            rb = None
+
+        # If rubberband chain couldn't be built (or fails later), we still add a safe EQ tilt proxy.
+        if (formant_shift is not None) and (not rb):
+            try:
+                fs = float(formant_shift)
+                fs = max(-1.0, min(1.0, fs))
+                if abs(fs) > 1e-6:
+                    low_gain = -fs * 4.0   # +4dB when fs=-1, -4dB when fs=+1
+                    high_gain = fs * 6.0   # -6dB when fs=-1, +6dB when fs=+1
+                    filters.append(f"equalizer=f=180:t=q:w=0.8:g={low_gain:.2f}")
+                    filters.append(f"equalizer=f=6500:t=q:w=0.9:g={high_gain:.2f}")
+            except Exception:
+                pass
 
     # Nasality: emphasize nasal resonance band (~900–1400Hz) and attenuate low/high.
     # Range per VOICES.md is 0.0–0.6; we map it to a *strong* but bounded effect so it's audible.
@@ -266,6 +323,26 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
                 filters.append(f"equalizer=f=9000:t=q:w=1.0:g={hi_cut_db:.2f}")
         except Exception:
             pass
+
+    # Emphasis strength: post-DSP "punch" shaping (audible, bounded).
+    # This is not true token-level emphasis, but it does increase perceived emphasis/impact.
+    if emphasis_strength is not None:
+        try:
+            es = float(emphasis_strength)
+            es = max(0.0, min(1.0, es))
+        except Exception:
+            es = 0.0
+        if es > 0:
+            if mode != "realtime":
+                # Gentle upward compression + limiter; parameters scale with es.
+                thr = 0.25 - (0.10 * es)          # ~0.25 -> 0.15
+                ratio = 1.5 + (2.5 * es)          # 1.5 -> 4.0
+                atk = 8 - (4 * es)                # 8ms -> 4ms
+                rel = 90 + (70 * es)              # 90ms -> 160ms
+                filters.append(f"acompressor=threshold={thr:.3f}:ratio={ratio:.2f}:attack={atk:.1f}:release={rel:.1f}:makeup=1.0")
+                filters.append("alimiter=limit=0.98:level=disabled")
+            # Presence lift to make consonants feel more emphatic (0..1 -> 0..3dB)
+            filters.append(f"equalizer=f=2800:t=q:w=1.0:g={es*3.0:.2f}")
 
     # Clarity boost: simple high-mid lift (0..1 -> 0..4dB).
     if clarity_boost is not None:
@@ -291,9 +368,11 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
         return
 
     tmp_path = wav_path + ".dsp.wav"
+    # Output sample rate: for realtime, lower to reduce CPU (Snapcast glue resamples anyway).
+    target_sr = 48000 if mode == "quality" else (16000 if mode == "realtime" else 22050)
     # Breathiness: mix in "air-band" noise (filtered) and duck it slightly with the voice so it stays natural.
     # Implemented by adding a second input.
-    if breathiness is not None:
+    if breathiness is not None and mode != "realtime":
         try:
             b = float(breathiness)
             b = max(0.0, min(1.0, b))
@@ -325,7 +404,7 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
             "-acodec",
             "pcm_s16le",
             "-ar",
-            "22050",
+            str(int(target_sr)),
             tmp_path,
         ]
     else:
@@ -341,11 +420,48 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
             "-acodec",
             "pcm_s16le",
             "-ar",
-            "22050",
+            str(int(target_sr)),
             tmp_path,
         ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    os.replace(tmp_path, wav_path)
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.replace(tmp_path, wav_path)
+        return
+    except subprocess.CalledProcessError:
+        # If rubberband-based formant shift failed at runtime (older ffmpeg build, missing library),
+        # fall back to the EQ-tilt approximation rather than dropping DSP entirely.
+        if used_rubberband_formant:
+            safe_filters = [f for f in filters if not f.strip().startswith("rubberband=")]
+            try:
+                fs = float(formant_shift) if formant_shift is not None else 0.0
+                fs = max(-1.0, min(1.0, fs))
+                if abs(fs) > 1e-6:
+                    low_gain = -fs * 4.0
+                    high_gain = fs * 6.0
+                    safe_filters.append(f"equalizer=f=180:t=q:w=0.8:g={low_gain:.2f}")
+                    safe_filters.append(f"equalizer=f=6500:t=q:w=0.9:g={high_gain:.2f}")
+                if safe_filters:
+                    cmd2 = [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-nostdin",
+                        "-y",
+                        "-i",
+                        wav_path,
+                        "-filter:a",
+                        ",".join(safe_filters),
+                        "-acodec",
+                        "pcm_s16le",
+                        "-ar",
+                        str(int(target_sr)),
+                        tmp_path,
+                    ]
+                    subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    os.replace(tmp_path, wav_path)
+                    return
+            except Exception:
+                pass
+        raise
 
 
 def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
@@ -358,9 +474,10 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
 
     sentence_pause_ms = controls.get("sentence_pause_ms")
     pause_variance_ms = controls.get("pause_variance_ms")
+    repeat_emphasis = controls.get("repeat_emphasis")
 
     # If none set, keep text unchanged.
-    if sentence_pause_ms is None and pause_variance_ms is None:
+    if sentence_pause_ms is None and pause_variance_ms is None and repeat_emphasis is None:
         return text
 
     try:
@@ -380,6 +497,29 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
 
     # Randomness in punctuation: occasionally add an extra comma (small effect).
     comma_prob = min(0.35, pv / 300.0) if pv > 0 else 0.0
+
+    # Repeat emphasis reduction:
+    # For consecutive repeated words ("no no", "very very"), insert light punctuation to avoid robotic stress.
+    # This is conservative (only touches immediate repeats) and tries to preserve meaning.
+    try:
+        re_strength = float(repeat_emphasis) if repeat_emphasis is not None else 0.0
+        re_strength = max(0.0, min(1.0, re_strength))
+    except Exception:
+        re_strength = 0.0
+
+    if re_strength > 0:
+        # Only for immediate duplicates, case-insensitive, alphabetic words.
+        # Example: "no no" -> "no, no" (or "no... no" at higher strength)
+        def _fix_immediate_repeats(s: str) -> str:
+            def repl(m: re.Match) -> str:
+                w = m.group(1)
+                # Choose separator based on strength.
+                sep = ", " if re_strength < 0.7 else "... "
+                return f"{w}{sep}{w}"
+
+            return re.sub(r"\b([A-Za-z']{2,})\s+\1\b", repl, s, flags=re.IGNORECASE)
+
+        text = _fix_immediate_repeats(text)
 
     out = []
     for ch in text:

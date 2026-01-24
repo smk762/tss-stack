@@ -426,7 +426,7 @@ components:
         nasality:
           type: number
           minimum: 0
-          maximum: 1
+          maximum: 0.6
           description: Emphasizes nasal resonances (post-DSP/EQ).
         intensity:
           type: number
@@ -481,7 +481,8 @@ components:
           enum: [quality, balanced, realtime]
         stream_chunk_ms:
           type: integer
-          minimum: 0
+          minimum: 40
+          maximum: 400
           description: Chunk size for streaming TTS output (advanced).
 
     TtsSynthesizeRequest:
