@@ -1,0 +1,698 @@
+openapi: 3.1.0
+info:
+  title: TSS Stack API
+  version: "1.0.0"
+  description: |
+    Versioned, engine-agnostic API for STT (speech-to-text) and TTS (text-to-speech).
+
+    Design goals:
+    - Stable UI ↔ backend contract (swap engines later)
+    - Async job pattern for backpressure and multi-user readiness
+    - Artifacts stored externally (MinIO/S3) and returned via presigned URLs
+servers:
+  - url: http://localhost:9001
+    description: Local dev
+tags:
+  - name: capabilities
+  - name: stt
+  - name: tts
+  - name: jobs
+
+paths:
+  /v1/capabilities:
+    get:
+      tags: [capabilities]
+      summary: Get capabilities for this deployment
+      operationId: getCapabilitiesV1
+      responses:
+        "200":
+          description: Capabilities describing supported features and UI ranges.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilitiesResponse"
+
+  /v1/stt/transcribe:
+    post:
+      tags: [stt]
+      summary: Enqueue STT transcription job
+      description: |
+        Accepts either multipart file upload or JSON base64 audio.
+        Returns a job id immediately; poll `/v1/jobs/{job_id}`.
+      operationId: sttTranscribeV1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XUserId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SttTranscribeMultipartRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SttTranscribeJsonRequest"
+      responses:
+        "202":
+          description: Job accepted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobEnqueued"
+        "400":
+          description: Invalid input.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Payload too large.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/tts/synthesize:
+    post:
+      tags: [tts]
+      summary: Enqueue TTS synthesis job
+      description: |
+        Neutral TTS params. The backend maps them to the active engine.
+        Returns a job id immediately; poll `/v1/jobs/{job_id}`.
+      operationId: ttsSynthesizeV1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XUserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TtsSynthesizeRequest"
+      responses:
+        "202":
+          description: Job accepted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobEnqueued"
+        "400":
+          description: Invalid input.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/jobs/{job_id}:
+    get:
+      tags: [jobs]
+      summary: Get job status
+      operationId: getJobV1
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/XUserId"
+      responses:
+        "200":
+          description: Job status and (when complete) result metadata.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Job not found.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [jobs]
+      summary: Cancel job (best effort)
+      operationId: cancelJobV1
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/XUserId"
+      responses:
+        "200":
+          description: Job cancelled (or already terminal).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Job not found.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  headers:
+    XRequestId:
+      description: Correlation id for troubleshooting.
+      schema:
+        type: string
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: If provided, duplicate requests within the server's TTL may be deduplicated.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    XUserId:
+      name: X-User-Id
+      in: header
+      required: false
+      description: Dev-only user identifier; replaced by auth later.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              examples: ["invalid_request", "not_found", "internal_error"]
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+    JobType:
+      type: string
+      enum: [stt.transcribe, tts.synthesize]
+
+    JobResult:
+      type: object
+      additionalProperties: false
+      required: [content_type, result_url, expires_at]
+      properties:
+        content_type:
+          type: string
+          description: MIME type of the result artifact.
+          examples: ["application/json", "audio/wav"]
+        result_url:
+          type: string
+          description: Presigned URL to fetch the artifact.
+        expires_at:
+          type: string
+          format: date-time
+        sha256:
+          type: string
+          description: Optional SHA-256 hex digest of the artifact.
+        bytes:
+          type: integer
+          minimum: 0
+          description: Optional size of artifact in bytes.
+
+    Job:
+      type: object
+      additionalProperties: false
+      required: [id, type, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/JobType"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        error:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+        result:
+          $ref: "#/components/schemas/JobResult"
+
+    JobEnqueued:
+      type: object
+      additionalProperties: false
+      required: [job_id, status_url]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status_url:
+          type: string
+          description: Relative URL to poll for job status.
+          examples: ["/v1/jobs/00000000-0000-0000-0000-000000000000"]
+
+    SttOutputFormat:
+      type: string
+      enum: [json, text, srt, vtt]
+    TtsOutputFormat:
+      type: string
+      enum: [wav, mp3, flac]
+
+    SttTranscribeParams:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+          description: Optional BCP-47 language code; if omitted engine auto-detects.
+          examples: ["en", "en-US"]
+        prompt:
+          type: string
+          description: Optional initial prompt / context.
+          maxLength: 5000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Sampling temperature (engine-dependent).
+        diarize:
+          type: boolean
+          default: false
+        timestamps:
+          type: boolean
+          default: true
+        output_format:
+          $ref: "#/components/schemas/SttOutputFormat"
+
+    SttTranscribeMultipartRequest:
+      allOf:
+        - $ref: "#/components/schemas/SttTranscribeParams"
+        - type: object
+          additionalProperties: false
+          required: [audio]
+          properties:
+            audio:
+              type: string
+              format: binary
+            audio_mime_type:
+              type: string
+              description: Optional; inferred if omitted.
+              examples: ["audio/wav", "audio/mpeg", "audio/webm"]
+
+    SttTranscribeJsonRequest:
+      allOf:
+        - $ref: "#/components/schemas/SttTranscribeParams"
+        - type: object
+          additionalProperties: false
+          required: [audio_b64, audio_mime_type]
+          properties:
+            audio_b64:
+              type: string
+              description: Base64-encoded audio bytes.
+            audio_mime_type:
+              type: string
+              examples: ["audio/wav", "audio/mpeg", "audio/webm"]
+
+    TtsControls:
+      type: object
+      additionalProperties: false
+      properties:
+        speed:
+          type: number
+          description: Speaking rate multiplier.
+        pitch_semitones:
+          type: number
+          description: Pitch shift in semitones (post-processing).
+        formant_shift:
+          type: number
+          description: Formant shift (post-processing).
+        energy:
+          type: number
+          description: Expressiveness / randomness (engine-mapped).
+        pause_ms:
+          type: integer
+          minimum: 0
+          description: Silence insertion / punctuation padding.
+        stability:
+          type: number
+          description: Optional stability control (engine-dependent).
+        pause_variance_ms:
+          type: integer
+          minimum: 0
+          description: Adds slight randomness to pauses (text preprocessing).
+        sentence_pause_ms:
+          type: integer
+          minimum: 0
+          description: Extra pause after sentence boundaries (text preprocessing).
+        prosody_depth:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Exaggeration of pitch/intonation contours (engine-mapped or post-DSP).
+        tempo_variance:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Micro-variation in speaking rate within sentences (post-DSP).
+        breathiness:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Adds aspiration/air noise (post-DSP).
+        nasality:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Emphasizes nasal resonances (post-DSP/EQ).
+        intensity:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Emotional punch/emphasis (engine-mapped or post-DSP).
+        emphasis_strength:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Strength of stressed word emphasis (advanced).
+        variation:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Randomness in delivery (engine sampling or DSP jitter).
+        clarity_boost:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Intelligibility boost (EQ/transient shaping).
+        articulation:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Relaxed ↔ precise articulation (proxy via shaping).
+        loudness_db:
+          type: number
+          description: Final output gain adjustment in dB.
+        sentence_split_aggressiveness:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: How aggressively long text is chunked (text preprocessing).
+        punctuation_weight:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Strength of punctuation-driven pauses/intonation (text preprocessing).
+        repeat_emphasis:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Reduce emphasis on repeated words (advanced).
+        post_eq_profile:
+          type: string
+          description: Preset EQ shaping.
+          enum: [neutral, warm, broadcast, crisp]
+        latency_mode:
+          type: string
+          description: Quality vs responsiveness trade-offs (advanced).
+          enum: [quality, balanced, realtime]
+        stream_chunk_ms:
+          type: integer
+          minimum: 0
+          description: Chunk size for streaming TTS output (advanced).
+
+    TtsSynthesizeRequest:
+      type: object
+      additionalProperties: false
+      required: [text, voice_id]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        voice_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Voice preset / speaker reference.
+        language:
+          type: string
+          description: Optional BCP-47 language code.
+          examples: ["en", "en-US"]
+        output_format:
+          $ref: "#/components/schemas/TtsOutputFormat"
+        sample_rate_hz:
+          type: integer
+          minimum: 8000
+          maximum: 48000
+        seed:
+          type: integer
+          description: Optional seed for deterministic synthesis (engine-dependent).
+        controls:
+          $ref: "#/components/schemas/TtsControls"
+        playback:
+          $ref: "#/components/schemas/TtsPlayback"
+
+    TtsPlayback:
+      type: object
+      additionalProperties: false
+      description: Optional playback side-effect (engine-agnostic; may be disabled by capabilities).
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [snapcast]
+        targets:
+          type: array
+          items: { type: string }
+          description: Snapcast client identifiers/names.
+        target_groups:
+          type: array
+          items: { type: string }
+          description: Snapcast group names.
+        pre_chime:
+          type: boolean
+          default: false
+        night_mode:
+          type: boolean
+          default: false
+        volume_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        dry_run:
+          type: boolean
+          default: false
+
+    RangeNumber:
+      type: object
+      additionalProperties: false
+      required: [min, max, default, step]
+      properties:
+        min: { type: number }
+        max: { type: number }
+        default: { type: number }
+        step: { type: number }
+        enabled: { type: boolean, default: true }
+
+    RangeInteger:
+      type: object
+      additionalProperties: false
+      required: [min, max, default, step]
+      properties:
+        min: { type: integer }
+        max: { type: integer }
+        default: { type: integer }
+        step: { type: integer }
+        enabled: { type: boolean, default: true }
+
+    EnumControl:
+      type: object
+      additionalProperties: false
+      required: [options, default]
+      properties:
+        options:
+          type: array
+          items: { type: string }
+          minItems: 1
+        default:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+
+    ControlSpec:
+      oneOf:
+        - $ref: "#/components/schemas/RangeNumber"
+        - $ref: "#/components/schemas/RangeInteger"
+        - $ref: "#/components/schemas/EnumControl"
+
+    CapabilitiesResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, stt, tts, jobs]
+      properties:
+        api_version:
+          type: string
+          enum: ["v1"]
+        stt:
+          type: object
+          additionalProperties: false
+          required: [enabled, accepts, audio, output_formats, features]
+          properties:
+            enabled: { type: boolean }
+            accepts:
+              type: object
+              additionalProperties: false
+              required: [multipart, json_base64]
+              properties:
+                multipart: { type: boolean }
+                json_base64: { type: boolean }
+            audio:
+              type: object
+              additionalProperties: false
+              required: [max_bytes, supported_mime_types]
+              properties:
+                max_bytes: { type: integer, minimum: 1 }
+                supported_mime_types:
+                  type: array
+                  items: { type: string }
+            output_formats:
+              type: array
+              items: { $ref: "#/components/schemas/SttOutputFormat" }
+            features:
+              type: object
+              additionalProperties: false
+              required: [diarization, timestamps]
+              properties:
+                diarization: { type: boolean }
+                timestamps: { type: boolean }
+        tts:
+          type: object
+          additionalProperties: false
+          required: [enabled, output_formats, voices, controls, playback]
+          properties:
+            enabled: { type: boolean }
+            output_formats:
+              type: array
+              items: { $ref: "#/components/schemas/TtsOutputFormat" }
+            voices:
+              type: object
+              additionalProperties: false
+              required: [supports_list, supports_custom_upload]
+              properties:
+                supports_list: { type: boolean }
+                supports_custom_upload: { type: boolean }
+            playback:
+              type: object
+              additionalProperties: false
+              required: [snapcast]
+              properties:
+                snapcast:
+                  type: object
+                  additionalProperties: false
+                  required: [enabled, supports_targets, supports_target_groups]
+                  properties:
+                    enabled: { type: boolean }
+                    supports_targets: { type: boolean }
+                    supports_target_groups: { type: boolean }
+            controls:
+              type: object
+              additionalProperties: false
+              required: [speed, pitch_semitones, formant_shift, energy, pause_ms, stability]
+              properties:
+                speed: { $ref: "#/components/schemas/ControlSpec" }
+                pitch_semitones: { $ref: "#/components/schemas/ControlSpec" }
+                formant_shift: { $ref: "#/components/schemas/ControlSpec" }
+                energy: { $ref: "#/components/schemas/ControlSpec" }
+                pause_ms: { $ref: "#/components/schemas/ControlSpec" }
+                stability: { $ref: "#/components/schemas/ControlSpec" }
+                # Extended controls (VOICES.md); may be disabled per deployment.
+                pause_variance_ms: { $ref: "#/components/schemas/ControlSpec" }
+                sentence_pause_ms: { $ref: "#/components/schemas/ControlSpec" }
+                prosody_depth: { $ref: "#/components/schemas/ControlSpec" }
+                tempo_variance: { $ref: "#/components/schemas/ControlSpec" }
+                breathiness: { $ref: "#/components/schemas/ControlSpec" }
+                nasality: { $ref: "#/components/schemas/ControlSpec" }
+                intensity: { $ref: "#/components/schemas/ControlSpec" }
+                emphasis_strength: { $ref: "#/components/schemas/ControlSpec" }
+                variation: { $ref: "#/components/schemas/ControlSpec" }
+                clarity_boost: { $ref: "#/components/schemas/ControlSpec" }
+                articulation: { $ref: "#/components/schemas/ControlSpec" }
+                loudness_db: { $ref: "#/components/schemas/ControlSpec" }
+                sentence_split_aggressiveness: { $ref: "#/components/schemas/ControlSpec" }
+                punctuation_weight: { $ref: "#/components/schemas/ControlSpec" }
+                repeat_emphasis: { $ref: "#/components/schemas/ControlSpec" }
+                post_eq_profile: { $ref: "#/components/schemas/ControlSpec" }
+                latency_mode: { $ref: "#/components/schemas/ControlSpec" }
+                stream_chunk_ms: { $ref: "#/components/schemas/ControlSpec" }
+        jobs:
+          type: object
+          additionalProperties: false
+          required: [poll_interval_ms_default, result_url_ttl_seconds]
+          properties:
+            poll_interval_ms_default: { type: integer, minimum: 100 }
+            result_url_ttl_seconds: { type: integer, minimum: 30 }

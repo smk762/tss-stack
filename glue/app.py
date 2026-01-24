@@ -7,6 +7,7 @@ import uuid
 import ipaddress
 import json
 import contextlib
+import logging
 from typing import List, Optional, Tuple, Dict, Any
 from pathlib import Path
 import httpx
@@ -16,9 +17,14 @@ from fastapi import BackgroundTasks
 import wave
 
 from visuals import notify_visuals
+from qdrant_routes import router as qdrant_router
+from self_lora_routes import router as self_lora_router
+
+log = logging.getLogger("glue.app")
 
 app = FastAPI(title="Voice Glue → Snapcast")
 app.include_router(qdrant_router)
+app.include_router(self_lora_router)
 
 
 # ---------- Config ----------
@@ -62,6 +68,17 @@ class SpeakAndPushRequest(BaseModel):
     dry_run: bool = False
     visual_media: str = "/opt/argus-visual/inara.mp4"
     visual_loop: bool = True
+
+# ---------- New: Play an existing WAV from shared output ----------
+class PlayWavRequest(BaseModel):
+    wav_path: str
+    targets: Optional[List[str]] = None
+    target_groups: Optional[List[str]] = None
+    pre_chime: bool = False
+    night_mode: bool = False
+    volume_percent: Optional[int] = None
+    timeout_seconds: float = TTS_TIMEOUT
+    dry_run: bool = False
 
 # Legacy model for backward compatibility
 class SpeakReq(BaseModel):
@@ -632,6 +649,92 @@ async def speak_and_push(
 
         return {"status": "ok", "duration_ms": total_ms, "applied": preview}
 
+
+@app.post("/play_wav")
+async def play_wav(
+    body: PlayWavRequest,
+    request: Request,
+    x_idempotency_key: Optional[str] = Header(default=None, convert_underscores=False),
+):
+    """
+    Stream an existing WAV file to Snapcast FIFO, using the same target selection / mute logic as `/speak_and_push`.
+
+    Intended to be used by other services that generated an audio file into the shared `/output` volume.
+    """
+    if _mark_idem(x_idempotency_key or ""):
+        return {"status": "duplicate_ignored", "idempotency_key": x_idempotency_key}
+
+    async with PLAYLOCK:
+        st = await snap_status()
+        clients_all = _flatten_clients(st)
+        targets, others = _pick_targets(clients_all, body.targets, body.target_groups)
+
+        if not targets:
+            if (body.targets or body.target_groups) and STRICT_TARGET_RESOLUTION:
+                raise HTTPException(status_code=400, detail={
+                    "error": "No targets resolved",
+                    "targets_requested": body.targets or [],
+                    "groups_requested": body.target_groups or [],
+                    "hint": "Check /snapcast/clients and /snapcast/groups for valid names/ids/MACs/IPs."
+                })
+            targets = clients_all
+            others = []
+
+        snap_before = _snapshot_volumes(clients_all)
+
+        if body.night_mode and body.volume_percent is None:
+            target_vol = 30
+        else:
+            target_vol = None if body.volume_percent is None else max(0, min(100, int(body.volume_percent)))
+
+        wav_path = body.wav_path
+        # Guardrail: only allow playback from OUTPUT_DIR
+        if not wav_path.startswith(OUTPUT_DIR + os.sep):
+            raise HTTPException(status_code=400, detail={
+                "error": f"wav_path must be under {OUTPUT_DIR}",
+                "wav_path": wav_path,
+            })
+        if not os.path.isfile(wav_path):
+            raise HTTPException(status_code=400, detail={
+                "error": "wav_path not found",
+                "wav_path": wav_path,
+            })
+
+        preview = {
+            "targets": [{"id": c["id"], "name": c.get("config", {}).get("name") or c.get("host", {}).get("name")} for c in targets],
+            "others":  [{"id": c["id"], "name": c.get("config", {}).get("name") or c.get("host", {}).get("name")} for c in others],
+            "target_volume_percent": target_vol,
+            "wav_path": wav_path,
+        }
+        if body.dry_run:
+            return {"status": "dry_run", "plan": preview}
+
+        try:
+            for c in others:
+                await _set_muted(c["id"], True)
+            for c in targets:
+                await _set_muted(c["id"], False)
+                if target_vol is not None:
+                    await _set_percent(c["id"], target_vol)
+
+            pre_ms = 0
+            if body.pre_chime:
+                pre_sec = 0.25
+                await _run_ffmpeg_to_fifo(sine=(880, pre_sec))
+                pre_ms = int(pre_sec * 1000)
+
+            # Determine duration for visuals (optional) and then stream
+            try:
+                wav_ms = _wav_duration_ms(wav_path)
+            except Exception:
+                wav_ms = 0
+            total_ms = pre_ms + wav_ms + 300
+
+            await _run_ffmpeg_to_fifo(input_wav=wav_path)
+        finally:
+            await _restore_volumes(snap_before)
+
+        return {"status": "ok", "duration_ms": total_ms, "applied": preview}
 
 
 @app.get("/voices")

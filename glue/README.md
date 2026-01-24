@@ -15,6 +15,22 @@
 docker compose up -d
 ```
 
+### Quickstart (local `.venv`)
+
+If you want to run `glue` locally without Docker:
+
+```bash
+cd /home/jasmine/tss-stack
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -r glue/requirements.txt
+
+# run glue (expects qdrant/xtts/snapserver reachable per your env vars)
+cd glue
+uvicorn app:app --host 0.0.0.0 --port 9000 --reload
+```
+
 - **Open the interactive API docs**:
   - `http://localhost:9000/docs`
   - (or replace `localhost` with your host/IP)
@@ -27,6 +43,11 @@ docker compose up -d
 - **Snapcast groups**: `GET /snapcast/groups`
 - **Speak (enhanced)**: `POST /speak_and_push`
 - **Speak (legacy)**: `POST /speak_and_push_legacy`
+- **Vector search (Qdrant)**: `POST /qdrant/search-plan`
+- **Vector search (multi-collection)**: `POST /qdrant/multi-search`
+- **Self-LoRA feedback**: `POST /self_lora/feedback`
+- **Self-LoRA adapters**: `GET /self_lora/adapters`, `POST /self_lora/adapters/register`
+- **Self-LoRA train (stub)**: `POST /self_lora/train`
 
 ### Examples (copy/paste)
 
@@ -139,6 +160,108 @@ curl -sS http://localhost:9000/speak_and_push \
   }' | jq
 ```
 
+### Vector search + intent match-to-fit
+
+`glue` exposes a small Qdrant+embeddings API (see `glue/qdrant_routes.py`).
+
+- Index text chunks into a collection with `POST /qdrant/index-plan`
+- Query with `POST /qdrant/search-plan`
+- Optionally enable an **intent “match-to-fit”** rule to rerank/filter vector hits using payload signals:
+  - `intent_tags`: string or list of strings
+  - `type` / `doc_type`
+  - `_collection` (auto-injected on index)
+
+Example: basic search (no intent logic):
+
+```bash
+curl -sS http://localhost:9000/qdrant/search-plan \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "collection": "kb",
+    "query_text": "how do I bring the stack up?",
+    "top_k": 8
+  }' | jq
+```
+
+Example: infer intent + rerank/filter:
+
+```bash
+curl -sS http://localhost:9000/qdrant/search-plan \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "collection": "kb",
+    "query_text": "debug: qdrant connection refused",
+    "top_k": 8,
+    "intent_mode": "infer",
+    "intent_min_fit": 0.2,
+    "intent_weight": 0.35,
+    "intent_debug": true
+  }' | jq
+```
+
+Example: search multiple collections and merge results:
+
+```bash
+curl -sS http://localhost:9000/qdrant/multi-search \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query_text": "what did we decide last time about the speaker setup?",
+    "collections": ["memories", "conversations", "kb"],
+    "top_k": 10,
+    "per_collection_k": 8,
+    "intent_mode": "infer"
+  }' | jq
+```
+
+### Self-LoRA (initial scaffolding)
+
+This repo now includes the **initial plumbing** for a Self-LoRA loop:
+
+- Collect interaction signals via `POST /self_lora/feedback` (stored as JSONL)
+- Track known LoRA adapters in a simple registry (`adapters.json`)
+- Create a training “run manifest” via `POST /self_lora/train` (stub for now)
+
+Feedback example:
+
+```bash
+curl -sS http://localhost:9000/self_lora/feedback \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "how do I bring the stack up?",
+    "collection": "kb",
+    "intent": "kb_lookup",
+    "chosen": {"id": "kb:compose:0"},
+    "rating": 1
+  }' | jq
+```
+
+List/register adapters:
+
+```bash
+curl -sS http://localhost:9000/self_lora/adapters | jq
+
+curl -sS http://localhost:9000/self_lora/adapters/register \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "kb_lookup_adapter_v0",
+    "path": "/models/adapters/kb_lookup_adapter_v0",
+    "intent": "kb_lookup"
+  }' | jq
+```
+
+Create a training run manifest (does not train yet):
+
+```bash
+curl -sS http://localhost:9000/self_lora/train \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "base_model_id": "Qwen/Qwen2.5-3B-Instruct-AWQ",
+    "max_events": 5000,
+    "intent": "kb_lookup",
+    "dry_run": true
+  }' | jq
+```
+
 ### Speaker / voice resolution
 
 - In `POST /speak_and_push`, `speaker` is resolved as:
@@ -170,6 +293,16 @@ Common ones (see `docker-compose.yml` for the defaults used in this repo):
 - **XTTS_OUTPUT_DIR**: Where synthesized WAVs are written (default `/output`)
 - **DEFAULT_SPEAKER**: Default voice name (default `female`)
 - **STRICT_TARGET_RESOLUTION**: If true, requesting targets/groups that resolve to 0 returns HTTP 400
+
+Vector search:
+
+- **QDRANT_URL**: default `http://localhost:6333`
+- **EMBED_MODEL**: default `BAAI/bge-small-en-v1.5`
+- **QDRANT_ALLOWED_COLLECTIONS**: default `recipes,memories,conversations,kb`
+
+Self-LoRA:
+
+- **SELF_LORA_DATA_DIR**: default `/data/self_lora` (mounted from the `self_lora_data` Docker volume in `docker-compose.yml`)
 
 Visual integration (optional):
 

@@ -1,15 +1,111 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9010:9000"   # S3 API
+      - "9011:9001"   # Console UI
+
+  gateway:
+    build:
+      context: ./services/gateway
+    container_name: gateway
+    restart: unless-stopped
+    environment:
+      - ENV=dev
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - MINIO_PRESIGN_ENDPOINT=${MINIO_PRESIGN_ENDPOINT:-localhost:9010}
+      - MINIO_PRESIGN_SECURE=false
+      - RESULT_URL_TTL_SECONDS=${RESULT_URL_TTL_SECONDS:-900}
+      - STT_MAX_BYTES=${STT_MAX_BYTES:-52428800}
+    volumes:
+      - jobs_data:/data
+    ports:
+      - "9001:9001"
+    depends_on:
+      - redis
+      - minio
+
+  stt-worker:
+    build:
+      context: ./services/stt-worker
+    container_name: stt-worker
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+    volumes:
+      - jobs_data:/data
+    depends_on:
+      - redis
+      - minio
+      - gateway
+
+  tts-worker:
+    build:
+      context: ./services/tts-worker
+    container_name: tts-worker
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+      - XTTS_URL=http://xtts:8020/tts_to_file
+      - VOICES_DIR=/voices
+      - XTTS_OUTPUT_DIR=/output
+      - SNAPCAST_GLUE_URL=http://xtts-glue:9000/play_wav
+    volumes:
+      - jobs_data:/data
+      - ./voices:/voices:ro
+      - xtts_output:/output
+    depends_on:
+      - redis
+      - minio
+      - gateway
+      - xtts
+
   xtts:
     image: daswer123/xtts-api-server:latest
     container_name: xtts
     restart: unless-stopped
     environment:
       - CUDA_VISIBLE_DEVICES=${XTTS_CUDA_VISIBLE_DEVICES:-0}
-      - DEVICE=cuda:0                  # set to cpu if you don’t want GPU
+      - DEVICE=${XTTS_DEVICE:-cpu}     # cpu by default; set to cuda:0 when enabling GPU
       - MODEL_DIR=/models
       - HF_HOME=/models/.cache/hf      # optional cache location
-    # comment the next line if not using GPU:
-    gpus: all
     volumes:
       - xtts_models:/models
       - xtts_output:/output
@@ -30,17 +126,23 @@ services:
       - VOICES_DIR=/voices
       - XTTS_LANG=en
       - XTTS_OUTPUT_DIR=/output
+      - SELF_LORA_DATA_DIR=/data/self_lora
+      - PYTHONDONTWRITEBYTECODE=1
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_ALLOW_CREATE=true
     volumes:
       - ./glue:/app                    # dev: hot-reload if your Dockerfile uses it
       - ./voices:/voices:ro
       - xtts_output:/output
       - snapcast_run:/run/snapcast     # shared FIFO with snapserver
+      - self_lora_data:/data/self_lora
     command: uvicorn app:app --host 0.0.0.0 --port 9000 --reload --reload-dir /app
     ports:
       - "9000:9000"
     depends_on:
       - xtts
       - snapserver
+      - qdrant
 
   snapserver:
     image: nolte/snapcast-server:latest
@@ -63,16 +165,52 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  llm-local:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: llm-local
+    restart: unless-stopped
+    profiles: ["llm"]
+    # OpenAI-compatible server (llama.cpp "server" binary).
+    # Provide your GGUF model path via LLM_GGUF (inside /models).
+    command: >
+      --host 0.0.0.0
+      --port 8000
+      --model /models/${LLM_GGUF:-model.gguf}
+      --ctx-size ${LLM_CTX_SIZE:-2048}
+      --threads ${LLM_THREADS:-8}
+    volumes:
+      - llm_models:/models
+    ports:
+      - "8000:8000"
+
+  llm-local-gpu:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    container_name: llm-local-gpu
+    restart: unless-stopped
+    profiles: ["llm-gpu"]
+    gpus: all
+    command: >
+      --host 0.0.0.0
+      --port 8000
+      --model /models/${LLM_GGUF:-model.gguf}
+      --ctx-size ${LLM_CTX_SIZE:-2048}
+      --threads ${LLM_THREADS:-8}
+      --n-gpu-layers ${LLM_GPU_LAYERS:-999}
+    volumes:
+      - llm_models:/models
+    ports:
+      - "8000:8000"
+
   llm:
     image: vllm/vllm-openai:latest
     container_name: llm
     restart: unless-stopped
+    profiles: ["gpu"]
     environment:
       - CUDA_VISIBLE_DEVICES=${LLM_CUDA_VISIBLE_DEVICES:-0}
       - HF_HOME=/models/.cache/hf
       - HF_TOKEN=${HF_TOKEN}
       - VLLM_LOGGING_LEVEL=INFO
-    # comment the next line if not using GPU:
     gpus: all
     command:
       - --model
@@ -102,9 +240,12 @@ services:
       - "8000:8000"
 
 volumes:
+  jobs_data:
+  minio_data:
   xtts_models:
   xtts_output:
   snapcast_run:
   snapcast_state:
   qdrant_data:
   llm_models:
+  self_lora_data:
