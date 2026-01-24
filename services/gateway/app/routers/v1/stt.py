@@ -59,7 +59,7 @@ async def transcribe(
     mstore.ensure_bucket()
 
     job_id = str(uuid.uuid4())
-    store.create_job(job_id, "stt.transcribe", owner_id=x_user_id)
+    store.create_job(job_id, "stt.transcribe", owner_id=x_user_id, params={"output_format": output_format or "json"})
     store.set_idempotency(idempotency_key or "", x_user_id, "stt.transcribe", job_id)
 
     # resolve audio bytes

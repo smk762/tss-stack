@@ -118,6 +118,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /v1/tts/stream/{job_id}:
+    get:
+      tags: [tts]
+      summary: Stream synthesized TTS audio result (Phase 1)
+      description: |
+        Streams the completed TTS result from storage (MinIO) using chunked transfer.
+
+        This is **Phase 1 streaming**: it does *not* reduce synthesis latency yet; it simply allows clients to
+        consume the final artifact as a stream. Delivery chunk sizing can be influenced by `controls.stream_chunk_ms`
+        from the original request.
+      operationId: ttsStreamResultV1
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/XUserId"
+      responses:
+        "200":
+          description: Audio stream (content-type matches produced artifact).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Job not found.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Result not ready (job not succeeded yet).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /v1/jobs/{job_id}:
     get:
       tags: [jobs]

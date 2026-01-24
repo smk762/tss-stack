@@ -30,6 +30,7 @@ class JobRow:
     result_bytes: Optional[int]
     result_sha256: Optional[str]
     owner_id: Optional[str]
+    params_json: Optional[str]
 
 
 class JobStore:
@@ -62,7 +63,8 @@ class JobStore:
                   result_content_type TEXT,
                   result_bytes INTEGER,
                   result_sha256 TEXT,
-                  owner_id TEXT
+                  owner_id TEXT,
+                  params_json TEXT
                 )
                 """
             )
@@ -76,9 +78,17 @@ class JobStore:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
+            # Lightweight migration for older DBs that don't yet have params_json.
+            try:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()]
+                if "params_json" not in cols:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN params_json TEXT")
+            except Exception:
+                # best-effort; table exists and we can still operate without params_json
+                pass
             conn.commit()
 
-    def create_job(self, job_id: str, job_type: str, owner_id: Optional[str]) -> JobRow:
+    def create_job(self, job_id: str, job_type: str, owner_id: Optional[str], params: Optional[Dict[str, Any]] = None) -> JobRow:
         row = JobRow(
             id=job_id,
             type=job_type,
@@ -96,6 +106,7 @@ class JobStore:
             result_bytes=None,
             result_sha256=None,
             owner_id=owner_id,
+            params_json=json.dumps(params or {}) if params is not None else None,
         )
         with self._connect() as conn:
             conn.execute(
@@ -104,8 +115,8 @@ class JobStore:
                   id,type,status,created_at,started_at,finished_at,progress,
                   error_code,error_message,error_details_json,
                   result_bucket,result_object,result_content_type,result_bytes,result_sha256,
-                  owner_id
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  owner_id,params_json
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     row.id,
@@ -124,6 +135,7 @@ class JobStore:
                     row.result_bytes,
                     row.result_sha256,
                     row.owner_id,
+                    row.params_json,
                 ),
             )
             conn.commit()
@@ -242,5 +254,6 @@ class JobStore:
             result_bytes=r["result_bytes"],
             result_sha256=r["result_sha256"],
             owner_id=r["owner_id"],
+            params_json=r["params_json"] if "params_json" in r.keys() else None,
         )
 

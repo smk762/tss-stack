@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 from datetime import timedelta
-from typing import Optional
+from typing import Optional, Any
 
 from minio import Minio
 
@@ -44,6 +44,16 @@ class MinioStore:
 
     def presign_get(self, bucket: str, object_name: str, ttl_seconds: int) -> str:
         return self.client_presign.presigned_get_object(bucket, object_name, expires=timedelta(seconds=ttl_seconds))
+
+    def get_object(self, bucket: str, object_name: str) -> Any:
+        """
+        Return a streaming object response from MinIO.
+
+        Callers MUST close the returned object (and release the connection) when done:
+        - resp.close()
+        - resp.release_conn()
+        """
+        return self.client_internal.get_object(bucket, object_name)
 
     def guess_ext(self, mime: Optional[str]) -> str:
         if not mime:
