@@ -54,6 +54,7 @@ async def get_capabilities():
                 "repeat_emphasis": {"min": 0.0, "max": 1.0, "default": 0.4, "step": 0.05, "enabled": True},
                 "latency_mode": {"options": ["quality", "balanced", "realtime"], "default": "balanced", "enabled": True},
                 "stream_chunk_ms": {"min": 40, "max": 400, "default": 120, "step": 20, "enabled": True},
+                "engine_temperature": {"min": 0.0, "max": 1.0, "default": 0.7, "step": 0.05, "enabled": True},
                 "stability": {"min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05, "enabled": False},
             },
         },

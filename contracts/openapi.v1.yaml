@@ -533,6 +533,11 @@ components:
           minimum: 40
           maximum: 400
           description: Chunk size for streaming TTS output (advanced).
+        engine_temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Raw engine sampling temperature (engine-dependent; may be ignored or unsupported).
 
     TtsSynthesizeRequest:
       type: object
@@ -739,6 +744,7 @@ components:
                 post_eq_profile: { $ref: "#/components/schemas/ControlSpec" }
                 latency_mode: { $ref: "#/components/schemas/ControlSpec" }
                 stream_chunk_ms: { $ref: "#/components/schemas/ControlSpec" }
+                engine_temperature: { $ref: "#/components/schemas/ControlSpec" }
         jobs:
           type: object
           additionalProperties: false

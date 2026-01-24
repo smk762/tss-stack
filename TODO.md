@@ -8,6 +8,11 @@ The guiding principle: **lock stable contracts now, change engines later**.
 
 For the concrete implementation checklist + staged rollout to add a **real streaming path** (so `stream_chunk_ms` can be enabled honestly), see `STREAMING_TODO.md`.
 
+## Phase 7 progress (controls)
+
+- Implemented **raw engine temperature** as `tts.controls.engine_temperature` (engine-dependent; best-effort passthrough).
+- Other “excluded for now” knobs remain excluded unless explicitly added later.
+
 ---
 
 ## 1. Lock the Contract: Stable API Between UI ↔ Backend

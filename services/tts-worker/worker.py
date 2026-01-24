@@ -120,6 +120,16 @@ def _read_controls(params: Dict[str, Any]) -> Dict[str, Any]:
     c = params.get("controls") or {}
     return c if isinstance(c, dict) else {}
 
+def _coerce_temperature(controls: Dict[str, Any]) -> Optional[float]:
+    raw = controls.get("engine_temperature")
+    if raw is None:
+        return None
+    try:
+        t = float(raw)
+    except Exception:
+        return None
+    return max(0.0, min(1.0, t))
+
 
 def _atempo_chain(speed: float) -> str:
     """
@@ -677,6 +687,10 @@ def main() -> None:
             pass
 
         payload = {"text": text, "speaker_wav": voice_path, "language": language, "file_name_or_path": out_wav}
+        # Raw engine temperature (engine-dependent). We try to pass it through, but fall back if unsupported.
+        eng_temp = _coerce_temperature(controls)
+        if eng_temp is not None:
+            payload["temperature"] = eng_temp
 
         last_err: Optional[str] = None
         with httpx.Client(timeout=REQUEST_TIMEOUT) as cli:
@@ -686,6 +700,25 @@ def main() -> None:
                     resp.raise_for_status()
                     last_err = None
                     break
+                except httpx.HTTPStatusError as e:
+                    # If the engine rejects unknown fields (common with strict schemas),
+                    # retry once without temperature so the request still succeeds.
+                    try:
+                        status = int(e.response.status_code)
+                        body = (e.response.text or "")[:400].lower()
+                    except Exception:
+                        status = 0
+                        body = ""
+                    if (
+                        400 <= status < 500
+                        and "temperature" in payload
+                        and any(x in body for x in ("extra fields", "unexpected", "unknown", "forbidden", "not permitted"))
+                    ):
+                        print(f"[tts-worker] XTTS rejected temperature; retrying without it (status={status})")
+                        payload.pop("temperature", None)
+                        continue
+                    # Otherwise handle like generic failure below.
+                    last_err = f"{e} body={(e.response.text or '')[:500]}"
                 except Exception as e:
                     # Common during cold start / model download, or XTTS restarting.
                     # Also happens if the output path is not accessible to XTTS.

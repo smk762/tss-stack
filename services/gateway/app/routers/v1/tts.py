@@ -43,6 +43,8 @@ class TtsControls(BaseModel):
     post_eq_profile: Optional[Literal["neutral", "warm", "broadcast", "crisp"]] = None
     latency_mode: Optional[Literal["quality", "balanced", "realtime"]] = None
     stream_chunk_ms: Optional[int] = Field(default=None, ge=40, le=400)
+    # Raw engine control (optional; engine-dependent)
+    engine_temperature: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class PlaybackSnapcast(BaseModel):
