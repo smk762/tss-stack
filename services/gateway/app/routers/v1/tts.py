@@ -107,6 +107,14 @@ def _extract_stream_chunk_ms(params: Dict[str, Any]) -> int:
         controls = {}
     raw = controls.get("stream_chunk_ms")
     if raw is None:
+        # Default chunk size can depend on latency_mode.
+        lm = controls.get("latency_mode")
+        if isinstance(lm, str):
+            m = lm.strip().lower()
+            if m == "realtime":
+                return 80
+            if m == "quality":
+                return 200
         return 120
     try:
         v = int(raw)
@@ -205,6 +213,7 @@ async def stream_tts_result(
                 except Exception:
                     pass
 
-    headers = {"Content-Disposition": f'inline; filename="{job_id}.wav"'}
+    ext = m.guess_ext(row.result_content_type)
+    headers = {"Content-Disposition": f'inline; filename="{job_id}.{ext}"'}
     return StreamingResponse(_iter_bytes(), media_type=row.result_content_type, headers=headers)
 

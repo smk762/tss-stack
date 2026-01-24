@@ -475,9 +475,17 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
     sentence_pause_ms = controls.get("sentence_pause_ms")
     pause_variance_ms = controls.get("pause_variance_ms")
     repeat_emphasis = controls.get("repeat_emphasis")
+    punctuation_weight = controls.get("punctuation_weight")
+    sentence_split_aggressiveness = controls.get("sentence_split_aggressiveness")
 
     # If none set, keep text unchanged.
-    if sentence_pause_ms is None and pause_variance_ms is None and repeat_emphasis is None:
+    if (
+        sentence_pause_ms is None
+        and pause_variance_ms is None
+        and repeat_emphasis is None
+        and punctuation_weight is None
+        and sentence_split_aggressiveness is None
+    ):
         return text
 
     try:
@@ -497,6 +505,15 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
 
     # Randomness in punctuation: occasionally add an extra comma (small effect).
     comma_prob = min(0.35, pv / 300.0) if pv > 0 else 0.0
+
+    # Punctuation weight: 0..1.
+    # - lower => reduce comma/semicolon density (less pausing)
+    # - higher => reinforce punctuation-driven pauses (more pausing)
+    try:
+        pw = float(punctuation_weight) if punctuation_weight is not None else 0.7
+        pw = max(0.0, min(1.0, pw))
+    except Exception:
+        pw = 0.7
 
     # Repeat emphasis reduction:
     # For consecutive repeated words ("no no", "very very"), insert light punctuation to avoid robotic stress.
@@ -521,13 +538,72 @@ def preprocess_text(text: str, controls: Dict[str, Any]) -> str:
 
         text = _fix_immediate_repeats(text)
 
+    # Apply punctuation_weight conservatively:
+    # - For pw < 0.5, soften commas/semicolons/colons by turning some into spaces.
+    # - For pw > 0.7, occasionally add a comma before conjunctions to create micro-pauses.
+    if pw < 0.5:
+        # Drop a fraction of commas/semicolons/colons.
+        # Strength: pw=0 -> drop ~70%, pw=0.49 -> drop ~20%
+        drop_p = 0.2 + (0.7 - 0.2) * (1.0 - (pw / 0.5))
+        out2 = []
+        for ch in text:
+            if ch in ",;:" and random.random() < drop_p:
+                out2.append(" ")
+            else:
+                out2.append(ch)
+        text = "".join(out2)
+    elif pw > 0.7:
+        add_p = min(0.25, (pw - 0.7) / 0.3 * 0.25)  # 0..0.25
+        # Add comma before common conjunctions when there's a reasonable clause boundary.
+        text = re.sub(
+            r"(?i)(\w)(\s+)(and|but|so|or)(\s+)",
+            lambda m: f"{m.group(1)}, {m.group(3)} " if random.random() < add_p else m.group(0),
+            text,
+        )
+
+    # Sentence split aggressiveness (0..1): encourage chunking by inserting paragraph breaks.
+    # This does not do multi-request synthesis; it only nudges the engine with structure.
+    try:
+        ssa = float(sentence_split_aggressiveness) if sentence_split_aggressiveness is not None else 0.0
+        ssa = max(0.0, min(1.0, ssa))
+    except Exception:
+        ssa = 0.0
+
+    if ssa > 0 and len(text) > 400:
+        # Target max chars per chunk: 900 (low) -> 220 (high)
+        max_chars = int(900 - (ssa * 680))
+        max_chars = max(180, min(1200, max_chars))
+
+        # Split into sentence-ish segments, keeping punctuation.
+        parts = re.split(r"(?<=[.!?])\s+", text.strip())
+        chunks: list[str] = []
+        cur = ""
+        for p in parts:
+            if not p:
+                continue
+            if not cur:
+                cur = p
+                continue
+            if len(cur) + 1 + len(p) <= max_chars:
+                cur = f"{cur} {p}"
+            else:
+                chunks.append(cur)
+                cur = p
+        if cur:
+            chunks.append(cur)
+
+        # Join chunks with blank lines to strongly suggest a pause/breath.
+        if len(chunks) > 1:
+            text = "\n\n".join(chunks)
+
     out = []
     for ch in text:
         out.append(ch)
         if ch in ".!?":
             if ellipses:
                 out.append(" " + ("..." * ellipses) + " ")
-            if comma_prob and random.random() < comma_prob:
+            # punctuation_weight influences how often we inject extra commas near sentence ends.
+            if comma_prob and random.random() < (comma_prob * (0.5 + pw)):
                 out.append(", ")
     return "".join(out)
 

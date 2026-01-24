@@ -63,6 +63,8 @@ class MinioStore:
             return "wav"
         if "mpeg" in m or "mp3" in m:
             return "mp3"
+        if "flac" in m:
+            return "flac"
         if "webm" in m:
             return "webm"
         if "ogg" in m:
