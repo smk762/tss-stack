@@ -18,6 +18,8 @@ import wave
 from visuals import notify_visuals
 
 app = FastAPI(title="Voice Glue → Snapcast")
+app.include_router(qdrant_router)
+
 
 # ---------- Config ----------
 XTTS_URL        = os.getenv("XTTS_URL", "http://xtts:8020/tts_to_file")
