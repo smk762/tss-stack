@@ -8,14 +8,10 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from qdrant_routes import router as qdrant_router
-from self_lora_routes import router as self_lora_router
 
 log = logging.getLogger("glue.app")
 
 app = FastAPI(title="Voice Glue")
-app.include_router(qdrant_router)
-app.include_router(self_lora_router)
 
 
 # ---------- Config ----------

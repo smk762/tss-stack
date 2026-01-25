@@ -11,8 +11,7 @@ Local-first stack for voice + retrieval, with **engine-agnostic contracts** so y
 - **`stt-worker`**: scaffolded worker (no engine wired yet)
 - **`tts-worker`**: XTTS job worker (calls `xtts` HTTP API, writes audio to MinIO)
 - **`xtts`**: XTTS engine server (defaults to CPU unless you opt into GPU)
-- **`xtts-glue`**: Voice Glue API (qdrant helpers + self-lora scaffolding; no playback side-effects)
-- **`qdrant`**: vector DB (existing)
+- **`xtts-glue`**: Voice Glue API (self-lora scaffolding; no playback side-effects)
 
 ## Docker Compose profiles
 
@@ -36,11 +35,9 @@ The key trick is to keep **stable HTTP contracts** at the edges, and swap engine
 
 - **UI ↔ gateway**: stable `/v1/*` API (OpenAPI in `contracts/openapi.v1.yaml`)
 - **gateway ↔ workers**: stable job payloads over Redis + stable artifact format in MinIO
-- **LLM**: treat it as a swappable **OpenAI-compatible endpoint** (typically remote behind Cloudflare Access)
 
 So “scaling up” is mostly:
 - increase worker replicas
 - move SQLite → Postgres (gateway job store)
 - move MinIO → S3
-- point clients at a different OpenAI-compatible LLM base URL without rewriting client code
 

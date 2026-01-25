@@ -3,7 +3,6 @@
 `glue` is a small FastAPI service intended to run alongside the rest of the stack.
 
 - **No Snapcast**: this branch removes Snapcast playback entirely.
-- **Keeps**: Qdrant helper routes and Self-LoRA scaffolding.
 - **Optional**: a tiny XTTS “synthesize to file” helper endpoint (no playback).
 
 ### Quickstart (docker compose)
@@ -34,8 +33,6 @@ uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 - **Health**: `GET /health`
 - **Voices**: `GET /voices` (lists `*.wav` under `VOICES_DIR`, typically mounted from `./voices`)
 - **Synthesize to file**: `POST /tts_to_file` (writes into `XTTS_OUTPUT_DIR`, typically mounted from `xtts_output`)
-- **Vector search (Qdrant)**: `POST /qdrant/search-plan`, `POST /qdrant/multi-search`
-- **Self-LoRA**: `POST /self_lora/feedback`, `GET /self_lora/adapters`, `POST /self_lora/adapters/register`, `POST /self_lora/train`
 
 ### Examples
 
