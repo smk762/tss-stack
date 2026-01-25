@@ -45,7 +45,6 @@ XTTS_OUTPUT_DIR = env_str("XTTS_OUTPUT_DIR", "/output")
 REQUEST_TIMEOUT = float(env_str("REQUEST_TIMEOUT", "60"))
 XTTS_STARTUP_GRACE_SECONDS = env_int("XTTS_STARTUP_GRACE_SECONDS", 120)
 
-SNAPCAST_GLUE_URL = env_str("SNAPCAST_GLUE_URL", "http://xtts-glue:9000/play_wav")
 DEBUG_PREPROCESS_TEXT = env_str("DEBUG_PREPROCESS_TEXT", "false").lower() in ("1", "true", "yes")
 
 
@@ -379,7 +378,7 @@ def apply_dsp_inplace(wav_path: str, controls: Dict[str, Any]) -> None:
         return
 
     tmp_path = wav_path + ".dsp.wav"
-    # Output sample rate: for realtime, lower to reduce CPU (Snapcast glue resamples anyway).
+    # Output sample rate: for realtime, lower to reduce CPU.
     target_sr = 48000 if mode == "quality" else (16000 if mode == "realtime" else 22050)
     # Breathiness: mix in "air-band" noise (filtered) and duck it slightly with the voice so it stays natural.
     # Implemented by adding a second input.
@@ -750,29 +749,6 @@ def main() -> None:
         except Exception as e:
             # DSP is optional; fall back to raw XTTS output.
             print(f"[tts-worker] DSP failed for {job_id}: {e}")
-
-        # Optional playback side-effect (e.g. Snapcast).
-        playback = params.get("playback") or {}
-        if isinstance(playback, dict) and playback.get("mode") == "snapcast":
-            try:
-                with httpx.Client(timeout=REQUEST_TIMEOUT) as cli:
-                    resp = cli.post(
-                        SNAPCAST_GLUE_URL,
-                        json={
-                            "wav_path": out_wav,
-                            "targets": playback.get("targets"),
-                            "target_groups": playback.get("target_groups"),
-                            "pre_chime": bool(playback.get("pre_chime", False)),
-                            "night_mode": bool(playback.get("night_mode", False)),
-                            "volume_percent": playback.get("volume_percent"),
-                            "dry_run": bool(playback.get("dry_run", False)),
-                        },
-                    )
-                    resp.raise_for_status()
-            except Exception as e:
-                # Playback is optional. We still succeed the job (artifact is produced),
-                # but we log the failure for troubleshooting.
-                print(f"[tts-worker] snapcast playback failed for {job_id}: {e}")
 
         object_name = f"outputs/{job_id}/audio.wav"
         size = os.path.getsize(out_wav)

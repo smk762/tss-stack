@@ -47,16 +47,6 @@ class TtsControls(BaseModel):
     engine_temperature: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
-class PlaybackSnapcast(BaseModel):
-    mode: str = Field(default="snapcast", description="Playback mode identifier.")
-    targets: Optional[list[str]] = None
-    target_groups: Optional[list[str]] = None
-    pre_chime: bool = False
-    night_mode: bool = False
-    volume_percent: Optional[int] = Field(default=None, ge=0, le=100)
-    dry_run: bool = False
-
-
 class TtsSynthesizeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
     voice_id: str = Field(min_length=1, max_length=256)
@@ -65,7 +55,6 @@ class TtsSynthesizeRequest(BaseModel):
     sample_rate_hz: Optional[int] = Field(default=None, ge=8000, le=48000)
     seed: Optional[int] = None
     controls: Optional[TtsControls] = None
-    playback: Optional[PlaybackSnapcast] = None
 
 
 @router.post("/tts/synthesize", status_code=202)
@@ -83,9 +72,6 @@ async def synthesize(
 
     if body.output_format and body.output_format not in config.TTS_OUTPUT_FORMATS:
         raise http_error(400, "invalid_request", "Invalid output_format", {"output_format": body.output_format, "supported": config.TTS_OUTPUT_FORMATS})
-
-    if body.playback and body.playback.mode != "snapcast":
-        raise http_error(400, "invalid_request", "Invalid playback mode", {"mode": body.playback.mode, "supported": ["snapcast"]})
 
     job_id = str(uuid.uuid4())
     store.create_job(job_id, "tts.synthesize", owner_id=x_user_id, params=body.model_dump())

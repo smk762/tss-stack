@@ -129,6 +129,17 @@
         color: var(--muted);
       }
       .right { margin-left: auto; }
+      a.btnLink {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      a.btnLink[aria-disabled="true"] {
+        opacity: 0.6;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -157,9 +168,6 @@
             <option value="inara">inara</option>
           </select>
 
-          <label for="snapcast">Also play on Snapcast</label>
-          <input id="snapcast" type="checkbox" />
-
           <button id="btn">Test voice</button>
         </div>
       </div>
@@ -178,7 +186,10 @@
       <div class="card">
         <div class="cardHead">
           <h3>Output</h3>
-          <span class="pill" id="lastJobPill">No job yet</span>
+          <div class="row" style="margin:0; gap:10px;">
+            <a id="downloadBtn" class="pill btnLink" href="#" download aria-disabled="true" title="Run a job to enable download">Download audio</a>
+            <span class="pill" id="lastJobPill">No job yet</span>
+          </div>
         </div>
         <audio id="player" controls></audio>
         <div id="status" class="status"></div>
@@ -194,6 +205,7 @@
       const controlsHintEl = document.getElementById("controlsHint");
       const capsPillEl = document.getElementById("capsPill");
       const lastJobPillEl = document.getElementById("lastJobPill");
+      const downloadBtnEl = document.getElementById("downloadBtn");
 
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let capabilities = null;
@@ -489,16 +501,19 @@
         try {
           const text = document.getElementById("text").value.trim();
           const voice = document.getElementById("voice").value;
-          const snapcast = document.getElementById("snapcast").checked;
           if (!text) throw new Error("Text is empty");
 
           player.removeAttribute("src");
           player.load();
+          downloadBtnEl.setAttribute("aria-disabled", "true");
+          downloadBtnEl.setAttribute("title", "Run a job to enable download");
+          downloadBtnEl.removeAttribute("download");
+          downloadBtnEl.href = "#";
 
           const body = { text, voice_id: voice, output_format: "wav" };
           const controls = currentControlsPayload();
           if (controls) body.controls = controls;
-          if (snapcast) body.playback = { mode: "snapcast", pre_chime: true };
+          // playback side-effects removed for bare-metal/local audio setups
 
           setStatus("Submitting…");
           const r = await fetch("/v1/tts/synthesize", {
@@ -516,9 +531,16 @@
           if (!jobId) throw new Error("Missing job id");
 
           // Prefer streaming endpoint (same origin); fall back to presigned URL.
-          player.src = `/v1/tts/stream/${jobId}`;
+          const streamUrl = `/v1/tts/stream/${jobId}`;
+          player.src = streamUrl;
           lastJobPillEl.textContent = `job: ${jobId}`;
           lastJobPillEl.title = url || "";
+
+          // Enable download using the streaming endpoint (same origin).
+          downloadBtnEl.href = streamUrl;
+          downloadBtnEl.setAttribute("download", `${jobId}.wav`);
+          downloadBtnEl.setAttribute("aria-disabled", "false");
+          downloadBtnEl.setAttribute("title", "Download the synthesized audio");
           await player.play();
         } catch (e) {
           setStatus({ error: String(e) });

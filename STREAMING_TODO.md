@@ -8,7 +8,6 @@ This doc tracks the work needed to support **true streaming audio** for `/v1/tts
 - **Cancelable**: stop generation mid-stream and reclaim GPU/CPU.
 - **Artifact-free audio**: no clicks/pops at chunk boundaries (overlap/crossfade).
 - **Contract-driven**: keep UI engine-agnostic; all toggles via `/v1/capabilities`.
-- **Works with Snapcast playback** (optional) without waiting for a full file.
 
 ## Non-goals (initial)
 
@@ -104,20 +103,6 @@ This doc tracks the work needed to support **true streaming audio** for `/v1/tts
 
 ---
 
-## 4) Snapcast streaming (optional)
-
-- **Current**: `xtts-glue` plays a whole WAV via ffmpeg into FIFO.
-- **Streaming goal**:
-  - stream PCM frames directly into FIFO as they arrive, OR
-  - gateway/worker maintains a persistent ffmpeg process writing to FIFO.
-
-- **Target selection + volume logic**
-  - Keep in glue (good), but provide a streaming playback endpoint:
-    - `POST /play_stream` with session id and PCM frames (WS) OR
-    - `POST /play_stream` that upgrades to WS for frames
-
----
-
 ## 5) Testing / observability
 
 - **Correctness**
@@ -138,7 +123,6 @@ This doc tracks the work needed to support **true streaming audio** for `/v1/tts
 ## 6) Rollout plan (recommended)
 
 - **Phase 1**: Streaming endpoint that streams a pre-generated WAV (minimal changes; validates plumbing only).
-- **Phase 2**: True engine streaming (or as close as XTTS allows), no Snapcast.
+- **Phase 2**: True engine streaming (or as close as XTTS allows).
 - **Phase 3**: Streaming DSP pipeline (stateful), enable `stream_chunk_ms`.
-- **Phase 4**: Snapcast streaming playback + `latency_mode` tuning.
 

@@ -568,39 +568,6 @@ components:
           description: Optional seed for deterministic synthesis (engine-dependent).
         controls:
           $ref: "#/components/schemas/TtsControls"
-        playback:
-          $ref: "#/components/schemas/TtsPlayback"
-
-    TtsPlayback:
-      type: object
-      additionalProperties: false
-      description: Optional playback side-effect (engine-agnostic; may be disabled by capabilities).
-      required: [mode]
-      properties:
-        mode:
-          type: string
-          enum: [snapcast]
-        targets:
-          type: array
-          items: { type: string }
-          description: Snapcast client identifiers/names.
-        target_groups:
-          type: array
-          items: { type: string }
-          description: Snapcast group names.
-        pre_chime:
-          type: boolean
-          default: false
-        night_mode:
-          type: boolean
-          default: false
-        volume_percent:
-          type: integer
-          minimum: 0
-          maximum: 100
-        dry_run:
-          type: boolean
-          default: false
 
     RangeNumber:
       type: object
@@ -688,7 +655,7 @@ components:
         tts:
           type: object
           additionalProperties: false
-          required: [enabled, output_formats, voices, controls, playback]
+          required: [enabled, output_formats, voices, controls]
           properties:
             enabled: { type: boolean }
             output_formats:
@@ -701,19 +668,6 @@ components:
               properties:
                 supports_list: { type: boolean }
                 supports_custom_upload: { type: boolean }
-            playback:
-              type: object
-              additionalProperties: false
-              required: [snapcast]
-              properties:
-                snapcast:
-                  type: object
-                  additionalProperties: false
-                  required: [enabled, supports_targets, supports_target_groups]
-                  properties:
-                    enabled: { type: boolean }
-                    supports_targets: { type: boolean }
-                    supports_target_groups: { type: boolean }
             controls:
               type: object
               additionalProperties: false

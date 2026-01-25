@@ -86,7 +86,6 @@ services:
       - XTTS_URL=http://xtts:8020/tts_to_file
       - VOICES_DIR=/voices
       - XTTS_OUTPUT_DIR=/output
-      - SNAPCAST_GLUE_URL=http://xtts-glue:9000/play_wav
     volumes:
       - jobs_data:/data
       - ./voices:/voices:ro
@@ -121,8 +120,6 @@ services:
     restart: unless-stopped
     environment:
       - XTTS_URL=http://xtts:8020/tts_to_file
-      - SNAPCAST_RPC=http://snapserver:1780/jsonrpc
-      - SNAPCAST_FIFO=/run/snapcast/snapfifo
       - VOICES_DIR=/voices
       - XTTS_LANG=en
       - XTTS_OUTPUT_DIR=/output
@@ -134,29 +131,13 @@ services:
       - ./glue:/app                    # dev: hot-reload if your Dockerfile uses it
       - ./voices:/voices:ro
       - xtts_output:/output
-      - snapcast_run:/run/snapcast     # shared FIFO with snapserver
       - self_lora_data:/data/self_lora
     command: uvicorn app:app --host 0.0.0.0 --port 9000 --reload --reload-dir /app
     ports:
       - "9000:9000"
     depends_on:
       - xtts
-      - snapserver
       - qdrant
-
-  snapserver:
-    image: nolte/snapcast-server:latest
-    container_name: snapserver
-    restart: unless-stopped
-    volumes:
-      - ./snapcast/snapserver.conf:/etc/snapserver.conf:ro
-      - snapcast_run:/run/snapcast     # will contain /run/snapcast/snapfifo
-      - snapcast_state:/var/lib/snapserver
-    ports:
-      - "1704:1704/udp"
-      - "1704:1704/tcp"
-      - "1705:1705/tcp"
-      - "1780:1780/tcp"
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -244,8 +225,6 @@ volumes:
   minio_data:
   xtts_models:
   xtts_output:
-  snapcast_run:
-  snapcast_state:
   qdrant_data:
   llm_models:
   self_lora_data:
