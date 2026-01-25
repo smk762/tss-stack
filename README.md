@@ -30,54 +30,17 @@ docker compose up -d --build
 
 Note: the gateway returns presigned URLs signed for `localhost:9010` by default via `MINIO_PRESIGN_ENDPOINT`.
 
-### Local LLM (CPU, llama.cpp)
-
-Runs an **OpenAI-compatible** HTTP server on `http://localhost:8000`.
-
-1) Put a GGUF model into the `llm_models` volume (or copy into it), and set:
-- `LLM_GGUF=model.gguf`
-
-2) Start:
-
-```bash
-docker compose --profile llm up -d
-```
-
-### Local LLM (GPU, llama.cpp CUDA)
-
-Best for GPUs like a GTX 1070 **if the image is compatible with your driver**.
-
-```bash
-docker compose --profile llm-gpu up -d
-```
-
-Knobs:
-- `LLM_GPU_LAYERS` (default `999` = “offload as much as possible”)
-
-### Production-style LLM (GPU, vLLM)
-
-On newer GPU servers, enable the `gpu` profile:
-
-```bash
-docker compose --profile gpu up -d
-```
-
-Notes:
-- `llm` (vLLM) also binds `:8000`. Don’t run `--profile llm`/`llm-gpu` at the same time unless you change ports.
-
 ## Scaling strategy (minimize friction)
 
 The key trick is to keep **stable HTTP contracts** at the edges, and swap engines behind them:
 
 - **UI ↔ gateway**: stable `/v1/*` API (OpenAPI in `contracts/openapi.v1.yaml`)
 - **gateway ↔ workers**: stable job payloads over Redis + stable artifact format in MinIO
-- **LLM**: treat it as a swappable **OpenAI-compatible endpoint**
-  - dev: `llm-local` (llama.cpp) on CPU or GPU
-  - prod: `llm` (vLLM) on stronger GPUs
+- **LLM**: treat it as a swappable **OpenAI-compatible endpoint** (typically remote behind Cloudflare Access)
 
 So “scaling up” is mostly:
 - increase worker replicas
 - move SQLite → Postgres (gateway job store)
 - move MinIO → S3
-- swap `llm-local` → `llm` (vLLM) without rewriting client code
+- point clients at a different OpenAI-compatible LLM base URL without rewriting client code
 

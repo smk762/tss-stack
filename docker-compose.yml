@@ -146,85 +146,10 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  llm-local:
-    image: ghcr.io/ggerganov/llama.cpp:server
-    container_name: llm-local
-    restart: unless-stopped
-    profiles: ["llm"]
-    # OpenAI-compatible server (llama.cpp "server" binary).
-    # Provide your GGUF model path via LLM_GGUF (inside /models).
-    command: >
-      --host 0.0.0.0
-      --port 8000
-      --model /models/${LLM_GGUF:-model.gguf}
-      --ctx-size ${LLM_CTX_SIZE:-2048}
-      --threads ${LLM_THREADS:-8}
-    volumes:
-      - llm_models:/models
-    ports:
-      - "8000:8000"
-
-  llm-local-gpu:
-    image: ghcr.io/ggerganov/llama.cpp:server-cuda
-    container_name: llm-local-gpu
-    restart: unless-stopped
-    profiles: ["llm-gpu"]
-    gpus: all
-    command: >
-      --host 0.0.0.0
-      --port 8000
-      --model /models/${LLM_GGUF:-model.gguf}
-      --ctx-size ${LLM_CTX_SIZE:-2048}
-      --threads ${LLM_THREADS:-8}
-      --n-gpu-layers ${LLM_GPU_LAYERS:-999}
-    volumes:
-      - llm_models:/models
-    ports:
-      - "8000:8000"
-
-  llm:
-    image: vllm/vllm-openai:latest
-    container_name: llm
-    restart: unless-stopped
-    profiles: ["gpu"]
-    environment:
-      - CUDA_VISIBLE_DEVICES=${LLM_CUDA_VISIBLE_DEVICES:-0}
-      - HF_HOME=/models/.cache/hf
-      - HF_TOKEN=${HF_TOKEN}
-      - VLLM_LOGGING_LEVEL=INFO
-    gpus: all
-    command:
-      - --model
-      - ${LLM_MODEL_ID:-Qwen/Qwen2.5-3B-Instruct-AWQ}
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --served-model-name
-      - qwen2.5-3b-awq
-      - --gpu-memory-utilization
-      - ${LLM_GPU_MEMORY_UTILIZATION:-0.45}
-      - --max-model-len
-      - ${LLM_MAX_MODEL_LEN:-1024}
-      - --max-num-seqs
-      - ${LLM_MAX_NUM_SEQS:-1}
-      - --swap-space
-      - ${LLM_SWAP_SPACE_GB:-16}
-      - --quantization
-      - awq
-      - --load-format
-      - awq
-      - --enforce-eager
-    volumes:
-      - llm_models:/models
-    ports:
-      - "8000:8000"
-
 volumes:
   jobs_data:
   minio_data:
   xtts_models:
   xtts_output:
   qdrant_data:
-  llm_models:
   self_lora_data:
