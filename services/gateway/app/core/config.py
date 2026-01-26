@@ -60,7 +60,7 @@ STT_SUPPORTED_MIME_TYPES = [
     s.strip()
     for s in env_str(
         "STT_SUPPORTED_MIME_TYPES",
-        "audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/webm,audio/ogg",
+        "audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/webm,audio/ogg,video/mp4,video/quicktime",
     ).split(",")
     if s.strip()
 ]

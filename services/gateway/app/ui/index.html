@@ -669,6 +669,10 @@
       });
 
       sttMicBtn.addEventListener("click", async () => {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setSttStatus({ error: "Mic not available. Use a secure context (https or localhost) and allow microphone access." });
+          return;
+        }
         if (mediaRecorder && mediaRecorder.state === "recording") {
           mediaRecorder.stop();
           sttMicHintEl.textContent = "Stopping…";
