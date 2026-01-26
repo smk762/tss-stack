@@ -276,7 +276,12 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
                     import traceback
                     traceback.print_exc()
                     raise
-                
+
+                # Guard against empty transcription responses (avoid silent 0-byte results).
+                text_val = str(whisper_result.get("text", "")).strip()
+                if not text_val:
+                    raise ValueError("Whisper returned empty transcription (no speech detected or decode failed).")
+
                 # Convert to requested format
                 content, content_type = convert_whisper_output(whisper_result, output_format)
                 
