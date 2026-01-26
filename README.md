@@ -11,7 +11,7 @@ Local-first stack for voice + retrieval, with **engine-agnostic contracts** so y
 - **`stt-worker`**: scaffolded worker (no engine wired yet)
 - **`tts-worker`**: XTTS job worker (calls `xtts` HTTP API, writes audio to MinIO)
 - **`xtts`**: XTTS engine server (defaults to CPU unless you opt into GPU)
-- **`xtts-glue`**: Voice Glue API (self-lora scaffolding; no playback side-effects)
+- **`xtts-glue`**: Voice Glue API (no playback side-effects)
 
 ## Docker Compose profiles
 
