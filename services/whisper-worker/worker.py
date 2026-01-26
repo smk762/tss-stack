@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from pathlib import Path
 from io import BytesIO
+import uuid
 
 import requests
 import redis
 from minio import Minio
+from minio.error import S3Error
 
 
 def env_str(name: str, default: str) -> str:
@@ -55,39 +57,51 @@ def now_iso() -> str:
 
 
 def db_connect() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    parent = os.path.dirname(DB_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def job_status(job_id: str) -> Optional[str]:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         cur = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,))
         r = cur.fetchone()
         return str(r["status"]) if r else None
+    finally:
+        conn.close()
 
 
 def mark_running(job_id: str) -> None:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         conn.execute(
             "UPDATE jobs SET status = ?, started_at = COALESCE(started_at, ?) WHERE id = ? AND status = 'queued'",
             ("running", now_iso(), job_id),
         )
         conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_failed(job_id: str, code: str, message: str) -> None:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         conn.execute(
             "UPDATE jobs SET status = ?, finished_at = ?, error_code = ?, error_message = ? WHERE id = ? AND status != 'cancelled'",
             ("failed", now_iso(), code, message, job_id),
         )
         conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_succeeded(job_id: str, bucket: str, object_name: str, content_type: str, bytes_: int) -> None:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         conn.execute(
             """
             UPDATE jobs
@@ -97,6 +111,8 @@ def mark_succeeded(job_id: str, bucket: str, object_name: str, content_type: str
             ("succeeded", now_iso(), bucket, object_name, content_type, bytes_, job_id),
         )
         conn.commit()
+    finally:
+        conn.close()
 
 
 def transcribe_with_whisper(audio_file_path: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -130,7 +146,7 @@ def transcribe_with_whisper(audio_file_path: str, params: Dict[str, Any]) -> Dic
     
     try:
         print(f"[whisper-worker] Sending request to {WHISPER_URL}/asr with data: {data}")
-        response = requests.post(f"{WHISPER_URL}/asr", files=files, data=data, timeout=300.0)
+        response = requests.post(f"{WHISPER_URL}/asr", files=files, data=data, timeout=REQUEST_TIMEOUT)
         print(f"[whisper-worker] Whisper response status: {response.status_code}")
         response.raise_for_status()
         
@@ -303,8 +319,12 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
 def main() -> None:
     r = redis.from_url(REDIS_URL, decode_responses=True)
     m = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=MINIO_SECURE)
-    if not m.bucket_exists(MINIO_BUCKET):
-        m.make_bucket(MINIO_BUCKET)
+    try:
+        if not m.bucket_exists(MINIO_BUCKET):
+            m.make_bucket(MINIO_BUCKET)
+    except S3Error as e:
+        if getattr(e, "code", "") not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+            raise
 
     # Listen to both STT queue (to replace existing worker) and dedicated Whisper queue
     queues = [QUEUE_STT, QUEUE_WHISPER]
@@ -324,13 +344,15 @@ def main() -> None:
         except json.JSONDecodeError:
             print(f"[whisper-worker] invalid json message from {queue_name}; skipping")
             continue
-        except Exception as e:
-            print(f"[whisper-worker] error decoding message from {queue_name}: {e}")
-            continue
 
         job_id = msg.get("job_id")
         if not job_id:
             print(f"[whisper-worker] missing job_id from {queue_name}; skipping")
+            continue
+        try:
+            uuid.UUID(str(job_id))
+        except Exception:
+            print(f"[whisper-worker] invalid job_id from {queue_name}; skipping")
             continue
 
         if job_status(job_id) == "cancelled":

@@ -59,23 +59,6 @@ async def transcribe(
     mstore.ensure_bucket()
 
     job_id = str(uuid.uuid4())
-    
-    # Store job parameters including original filename
-    job_params = {
-        "output_format": output_format or "json",
-        "language": language,
-        "prompt": prompt,
-        "temperature": temperature,
-        "diarize": diarize,
-        "timestamps": timestamps,
-    }
-    
-    # Add original filename if available
-    if audio and audio.filename:
-        job_params["original_filename"] = audio.filename
-    
-    store.create_job(job_id, "stt.transcribe", owner_id=x_user_id, params=job_params)
-    store.set_idempotency(idempotency_key or "", x_user_id, "stt.transcribe", job_id)
 
     # resolve audio bytes
     data: bytes
@@ -97,6 +80,21 @@ async def transcribe(
 
     if len(data) > config.STT_MAX_BYTES:
         raise http_error(413, "payload_too_large", "Audio too large", {"max_bytes": config.STT_MAX_BYTES, "bytes": len(data)})
+
+    # Store job parameters including original filename
+    job_params = {
+        "output_format": output_format or "json",
+        "language": language,
+        "prompt": prompt,
+        "temperature": temperature,
+        "diarize": diarize,
+        "timestamps": timestamps,
+    }
+    if audio and audio.filename:
+        job_params["original_filename"] = audio.filename
+
+    store.create_job(job_id, "stt.transcribe", owner_id=x_user_id, params=job_params)
+    store.set_idempotency(idempotency_key or "", x_user_id, "stt.transcribe", job_id)
 
     ext = mstore.guess_ext(mime)
     input_object = f"uploads/{job_id}/input.{ext}"

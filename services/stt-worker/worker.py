@@ -3,6 +3,8 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
+import uuid
+from minio.error import S3Error
 
 import redis
 from minio import Minio
@@ -31,42 +33,57 @@ def now_iso() -> str:
 
 
 def db_connect() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    parent = os.path.dirname(DB_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def job_status(job_id: str) -> Optional[str]:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         cur = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,))
         r = cur.fetchone()
         return str(r["status"]) if r else None
+    finally:
+        conn.close()
 
 
 def mark_running(job_id: str) -> None:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         conn.execute(
             "UPDATE jobs SET status = ?, started_at = COALESCE(started_at, ?) WHERE id = ? AND status = 'queued'",
             ("running", now_iso(), job_id),
         )
         conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_failed(job_id: str, code: str, message: str) -> None:
-    with db_connect() as conn:
+    conn = db_connect()
+    try:
         conn.execute(
             "UPDATE jobs SET status = ?, finished_at = ?, error_code = ?, error_message = ? WHERE id = ? AND status != 'cancelled'",
             ("failed", now_iso(), code, message, job_id),
         )
         conn.commit()
+    finally:
+        conn.close()
 
 
 def main() -> None:
     r = redis.from_url(REDIS_URL, decode_responses=True)
     m = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=MINIO_SECURE)
-    if not m.bucket_exists(MINIO_BUCKET):
-        m.make_bucket(MINIO_BUCKET)
+    try:
+        if not m.bucket_exists(MINIO_BUCKET):
+            m.make_bucket(MINIO_BUCKET)
+    except S3Error as e:
+        if getattr(e, "code", "") not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+            raise
 
     print(f"[stt-worker] queue={QUEUE_STT} redis={REDIS_URL} db={DB_PATH}")
     print("[stt-worker] NOTE: STT engine is not implemented yet; jobs will fail with not_implemented.")
@@ -81,12 +98,14 @@ def main() -> None:
         except json.JSONDecodeError:
             print("[stt-worker] invalid json message; skipping")
             continue
-        except Exception as e:
-            print(f"[stt-worker] error decoding message: {e}")
-            continue
 
         job_id = msg.get("job_id")
         if not job_id:
+            continue
+        try:
+            uuid.UUID(str(job_id))
+        except Exception:
+            print("[stt-worker] invalid job_id; skipping")
             continue
 
         if job_status(job_id) == "cancelled":

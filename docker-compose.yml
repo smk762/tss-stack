@@ -107,14 +107,6 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - MODEL_DIR=/models
       - HF_HOME=/models/.cache/hf      # optional cache location
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${XTTS_CUDA_VISIBLE_DEVICES:-0}"]
-              capabilities: [gpu]
-    runtime: nvidia                    # required so the container can see the GPU
     volumes:
       - xtts_models:/models
       - xtts_output:/output

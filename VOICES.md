@@ -1,4 +1,4 @@
-# TSS Voice Controls – Extended Slider Specification
+# TTS Voice Controls – Extended Slider Specification
 
 This document defines **additional, future‑proof voice control sliders** suitable for an XTTS‑style TTS stack today, while remaining compatible with future engines and multi‑user hosting.
 

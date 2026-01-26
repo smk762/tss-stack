@@ -54,6 +54,12 @@ async def get_job(job_id: str, x_user_id: Optional[str] = Header(default=None, c
                 # Get the actual result content for preview
                 result_content = m.get_object_content(row.result_bucket, row.result_object)
                 if result_content:
+                    if isinstance(result_content, bytes):
+                        try:
+                            result_content = result_content.decode("utf-8", errors="ignore")
+                        except Exception:
+                            result_content = None
+                if result_content:
                     if row.result_content_type == "application/json":
                         # Extract text from JSON response
                         try:

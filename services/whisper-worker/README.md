@@ -107,7 +107,7 @@ curl -X POST "http://localhost:9001/v1/stt/transcribe" \
 
 ## Integration
 
-The Whisper worker seamlessly integrates with your existing TSS stack:
+The Whisper worker seamlessly integrates with your existing TTS stack:
 
 - Uses the same Redis queue system
 - Stores results in the same MinIO bucket

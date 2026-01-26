@@ -85,7 +85,7 @@ All tests passed successfully:
 
 ### Current Architecture
 
-```
+```text
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐
 │   Gateway   │───▶│ Redis Queue  │───▶│ Whisper Worker  │
 │  (Port 9001)│    │              │    │                 │

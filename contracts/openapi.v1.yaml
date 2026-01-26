@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: TSS Stack API
+  title: TTS Stack API
   version: "1.0.0"
   description: |
     Versioned, engine-agnostic API for STT (speech-to-text) and TTS (text-to-speech).
@@ -147,6 +147,14 @@ paths:
               $ref: "#/components/headers/XRequestId"
           content:
             audio/wav:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
               schema:
                 type: string
                 format: binary

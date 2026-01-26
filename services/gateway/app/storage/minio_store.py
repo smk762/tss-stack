@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Optional, Any
 
 from minio import Minio
+from minio.error import S3Error
 
 from app.core import config
 
@@ -28,8 +29,13 @@ class MinioStore:
         )
 
     def ensure_bucket(self) -> None:
-        if not self.client_internal.bucket_exists(config.MINIO_BUCKET):
-            self.client_internal.make_bucket(config.MINIO_BUCKET)
+        try:
+            if not self.client_internal.bucket_exists(config.MINIO_BUCKET):
+                self.client_internal.make_bucket(config.MINIO_BUCKET)
+        except S3Error as e:
+            # Safe if bucket was created concurrently.
+            if getattr(e, "code", "") not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+                raise
 
     def put_bytes(self, object_name: str, data: bytes, content_type: str) -> int:
         bio = io.BytesIO(data)
@@ -57,18 +63,22 @@ class MinioStore:
 
     def get_object_content(self, bucket: str, object_name: str) -> Optional[str]:
         """
-        Get the content of an object as a string.
-        Returns None if the object doesn't exist or can't be read.
+        Get the content of an object as a UTF-8 string.
+        Returns None if the object is missing or can't be decoded.
         """
         try:
             response = self.client_internal.get_object(bucket, object_name)
             try:
-                content = response.read().decode('utf-8')
-                return content
+                raw = response.read()
+                return raw.decode("utf-8")
             finally:
                 response.close()
                 response.release_conn()
-        except Exception:
+        except S3Error as e:
+            if getattr(e, "code", "") in ("NoSuchKey", "NoSuchBucket"):
+                return None
+            raise
+        except UnicodeDecodeError:
             return None
 
     def guess_ext(self, mime: Optional[str]) -> str:
