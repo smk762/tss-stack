@@ -26,6 +26,7 @@ docker compose up -d --build
 - Gateway: `http://localhost:9001/health`
 - MinIO S3 API: `http://localhost:9010`
 - MinIO console: `http://localhost:9011`
+- Gateway Dev UI (TTS + STT upload/mic): `http://localhost:9001/ui` (mic capture requires HTTPS or localhost)
 
 Required secrets (no insecure defaults):
 
