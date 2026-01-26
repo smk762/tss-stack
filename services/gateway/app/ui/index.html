@@ -537,6 +537,16 @@
 
       function setSttStatus(msg) {
         sttStatusEl.textContent = typeof msg === "string" ? msg : JSON.stringify(msg, null, 2);
+        // If we have a result_url, add a clickable link.
+        try {
+          const obj = typeof msg === "object" ? msg : JSON.parse(msg);
+          const url = obj?.result?.result_url;
+          if (url) {
+            sttStatusEl.innerHTML = `${sttStatusEl.textContent}<br/><a href="${url}" target="_blank" rel="noreferrer">Open result_url</a>`;
+          }
+        } catch (_) {
+          /* ignore */
+        }
       }
 
       async function fetchResultPreview(job) {
