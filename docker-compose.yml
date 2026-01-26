@@ -97,14 +97,26 @@ services:
       - xtts
 
   xtts:
-    image: daswer123/xtts-api-server:latest
+    build:
+      context: ./services/xtts
+    image: xtts-api-server:0.8.0-cuda12.1
     container_name: xtts
     restart: unless-stopped
     environment:
       - CUDA_VISIBLE_DEVICES=${XTTS_CUDA_VISIBLE_DEVICES:-0}
       - DEVICE=${XTTS_DEVICE:-cpu}     # cpu by default; set to cuda:0 when enabling GPU
+      - NVIDIA_VISIBLE_DEVICES=${XTTS_CUDA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - MODEL_DIR=/models
       - HF_HOME=/models/.cache/hf      # optional cache location
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${XTTS_CUDA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    runtime: nvidia                    # required so the container can see the GPU
     volumes:
       - xtts_models:/models
       - xtts_output:/output
@@ -134,8 +146,49 @@ services:
     depends_on:
       - xtts
 
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: whisper
+    restart: unless-stopped
+    environment:
+      - ASR_MODEL=${WHISPER_MODEL:-base}
+      - ASR_ENGINE=openai_whisper
+      - ASR_MODEL_PATH=/models
+    volumes:
+      - whisper_models:/models
+    ports:
+      - "9002:9000"
+
+  whisper-worker:
+    build:
+      context: ./services/whisper-worker
+    container_name: whisper-worker
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+      - WHISPER_URL=http://whisper:9000
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - WHISPER_LANGUAGE=${WHISPER_LANGUAGE:-auto}
+      - QUEUE_STT=queue:stt.transcribe
+      - QUEUE_WHISPER=queue:whisper.transcribe
+    volumes:
+      - jobs_data:/data
+    depends_on:
+      - redis
+      - minio
+      - gateway
+      - whisper
+
 volumes:
   jobs_data:
   minio_data:
   xtts_models:
   xtts_output:
+  whisper_models:

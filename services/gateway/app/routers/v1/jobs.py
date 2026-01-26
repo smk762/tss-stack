@@ -47,6 +47,27 @@ async def get_job(job_id: str, x_user_id: Optional[str] = Header(default=None, c
             "sha256": row.result_sha256,
             "bytes": row.result_bytes,
         }
+        
+        # Add a preview of the transcribed text for STT/Whisper jobs
+        if row.type in ["stt.transcribe", "whisper.transcribe"] and row.result_bytes and row.result_bytes < 10000:  # Only for small results
+            try:
+                # Get the actual result content for preview
+                result_content = m.get_object_content(row.result_bucket, row.result_object)
+                if result_content:
+                    if row.result_content_type == "application/json":
+                        # Extract text from JSON response
+                        try:
+                            json_data = json.loads(result_content)
+                            if "text" in json_data:
+                                result["preview"] = json_data["text"][:200]  # First 200 chars
+                        except:
+                            pass
+                    elif row.result_content_type == "text/plain":
+                        # Use plain text directly
+                        result["preview"] = result_content[:200]  # First 200 chars
+            except Exception:
+                # If we can't get preview, that's okay
+                pass
 
     err = None
     if row.status == "failed":
@@ -54,7 +75,20 @@ async def get_job(job_id: str, x_user_id: Optional[str] = Header(default=None, c
     if row.status == "cancelled":
         err = {"code": "cancelled", "message": "Job cancelled", "details": {}}
 
-    return {
+    # Parse job parameters to include in response
+    params = {}
+    if row.params_json:
+        try:
+            params = json.loads(row.params_json)
+        except Exception:
+            pass
+
+    # Extract original filename from job parameters if available
+    original_filename = None
+    if params and "original_filename" in params:
+        original_filename = params["original_filename"]
+
+    response = {
         "id": row.id,
         "type": row.type,
         "status": row.status,
@@ -65,6 +99,16 @@ async def get_job(job_id: str, x_user_id: Optional[str] = Header(default=None, c
         "error": err,
         "result": result,
     }
+
+    # Add parameters if available
+    if params:
+        response["parameters"] = params
+
+    # Add original filename if we can determine it
+    if original_filename:
+        response["original_filename"] = original_filename
+
+    return response
 
 
 @router.delete("/jobs/{job_id}")

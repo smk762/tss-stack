@@ -55,6 +55,22 @@ class MinioStore:
         """
         return self.client_internal.get_object(bucket, object_name)
 
+    def get_object_content(self, bucket: str, object_name: str) -> Optional[str]:
+        """
+        Get the content of an object as a string.
+        Returns None if the object doesn't exist or can't be read.
+        """
+        try:
+            response = self.client_internal.get_object(bucket, object_name)
+            try:
+                content = response.read().decode('utf-8')
+                return content
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception:
+            return None
+
     def guess_ext(self, mime: Optional[str]) -> str:
         if not mime:
             return "bin"

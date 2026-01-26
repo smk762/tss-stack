@@ -11,7 +11,7 @@ from app.queue.redis_queue import RedisQueue
 from app.storage.minio_store import MinioStore
 
 
-router = APIRouter(tags=["stt"])
+router = APIRouter(tags=["whisper"])
 
 
 def _validate_mime(mime: Optional[str]) -> None:
@@ -21,34 +21,39 @@ def _validate_mime(mime: Optional[str]) -> None:
         raise http_error(400, "invalid_request", "Unsupported audio_mime_type", {"audio_mime_type": mime, "supported": config.STT_SUPPORTED_MIME_TYPES})
 
 
-@router.post("/stt/transcribe", status_code=202)
+@router.post("/whisper/transcribe", status_code=202)
 async def transcribe(
     # multipart inputs
     audio: Optional[UploadFile] = File(default=None),
     audio_mime_type: Optional[str] = Form(default=None),
-    # shared params
+    # whisper-specific params
     language: Optional[str] = Form(default=None),
     prompt: Optional[str] = Form(default=None),
     temperature: Optional[float] = Form(default=None),
-    diarize: Optional[bool] = Form(default=None),
-    timestamps: Optional[bool] = Form(default=None),
     output_format: Optional[str] = Form(default=None),
-    # json base64 fallback (FastAPI can't do union bodies cleanly in one function; accept via header-driven clients)
+    # json base64 fallback
     x_audio_b64: Optional[str] = Header(default=None, convert_underscores=False),
     x_audio_mime_type: Optional[str] = Header(default=None, convert_underscores=False),
     idempotency_key: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
     x_user_id: Optional[str] = Header(default=None, convert_underscores=False),
 ):
     """
+    Transcribe audio using OpenAI Whisper.
+    
     Accept multipart/form-data with `audio` file.
-
     JSON base64 mode is supported via headers for now (`x-audio-b64`, `x-audio-mime-type`) to keep the handler simple.
+    
+    Whisper-specific parameters:
+    - language: Language code (e.g., 'en', 'es', 'fr') or 'auto' for auto-detection
+    - prompt: Initial prompt to guide the transcription
+    - temperature: Sampling temperature (0.0 to 1.0)
+    - output_format: Output format (json, text, srt, vtt)
     """
     store = JobStore()
     store.init()
 
     # best-effort idempotency
-    existing = store.get_or_create_idempotency(idempotency_key or "", x_user_id, "stt.transcribe")
+    existing = store.get_or_create_idempotency(idempotency_key or "", x_user_id, "whisper.transcribe")
     if existing:
         return {"job_id": existing, "status_url": f"/v1/jobs/{existing}"}
 
@@ -66,16 +71,13 @@ async def transcribe(
         "language": language,
         "prompt": prompt,
         "temperature": temperature,
-        "diarize": diarize,
-        "timestamps": timestamps,
     }
     
     # Add original filename if available
     if audio and audio.filename:
         job_params["original_filename"] = audio.filename
     
-    store.create_job(job_id, "stt.transcribe", owner_id=x_user_id, params=job_params)
-    store.set_idempotency(idempotency_key or "", x_user_id, "stt.transcribe", job_id)
+    store.create_job(job_id, "whisper.transcribe", owner_id=x_user_id, params=job_params)
 
     # resolve audio bytes
     data: bytes
@@ -104,10 +106,10 @@ async def transcribe(
 
     q = RedisQueue()
     await q.enqueue(
-        config.QUEUE_STT,
+        "queue:whisper.transcribe",  # Use dedicated Whisper queue
         {
             "job_id": job_id,
-            "type": "stt.transcribe",
+            "type": "whisper.transcribe",
             "owner_id": x_user_id,
             "input": {
                 "bucket": config.MINIO_BUCKET,
@@ -118,12 +120,9 @@ async def transcribe(
                 "language": language,
                 "prompt": prompt,
                 "temperature": temperature,
-                "diarize": diarize,
-                "timestamps": timestamps,
                 "output_format": output_format or "json",
             },
         },
     )
 
     return {"job_id": job_id, "status_url": f"/v1/jobs/{job_id}"}
-

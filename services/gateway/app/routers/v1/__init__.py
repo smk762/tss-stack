@@ -1,2 +1,2 @@
-from . import capabilities, jobs, stt, tts  # noqa: F401
+from . import capabilities, jobs, stt, tts, whisper  # noqa: F401
 
