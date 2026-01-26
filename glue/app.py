@@ -140,5 +140,6 @@ async def tts_to_file(body: TtsToFileRequest) -> Dict[str, Any]:
     if not Path(out_path).is_file():
         raise HTTPException(status_code=502, detail={"error": "TTS reported success but output file missing", "out_path": out_path})
 
-    return {"ok": True, "wav_path": out_path}
+    rel = Path(out_path).name
+    return {"ok": True, "file": rel, "wav_path": rel, "relative_path": rel, "stored_under": "XTTS_OUTPUT_DIR"}
 

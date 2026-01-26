@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 import random
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+SUPPORTED_TTS_FORMATS: Dict[str, str] = {
+    "wav": "audio/wav",
+    "mp3": "audio/mpeg",
+    "flac": "audio/flac",
+}
+
 
 import httpx
 import redis
@@ -98,21 +104,79 @@ def mark_succeeded(job_id: str, bucket: str, object_name: str, content_type: str
 
 
 def resolve_voice_path(voice_id: str) -> str:
-    if voice_id.endswith(".wav"):
-        p = Path(voice_id)
-        if p.is_absolute():
-            return str(p)
-        return str(Path(VOICES_DIR) / voice_id)
-    return str(Path(VOICES_DIR) / f"{voice_id}.wav")
+    """
+    Resolve a user-provided voice_id to a file path inside VOICES_DIR.
+    Rejects attempts to escape VOICES_DIR (../ or absolute paths).
+    """
+    if not str(voice_id).strip():
+        raise ValueError("voice_id is required")
+    root = Path(VOICES_DIR).resolve()
+    candidate = Path(voice_id)
+    if not candidate.suffix:
+        candidate = Path(VOICES_DIR) / f"{voice_id}.wav"
+    elif not candidate.is_absolute():
+        candidate = Path(VOICES_DIR) / candidate
+
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except Exception:
+        raise ValueError(f"voice_id must resolve under VOICES_DIR ({VOICES_DIR})")
+    return str(resolved)
 
 
-def output_ext(fmt: Optional[str]) -> str:
+def normalize_output_format(fmt: Optional[str]) -> str:
     if not fmt:
         return "wav"
-    f = fmt.lower().strip()
-    if f in ("wav", "mp3", "flac"):
-        return f
-    return "wav"
+    f = str(fmt).strip().lower()
+    if f not in SUPPORTED_TTS_FORMATS:
+        raise ValueError(f"Unsupported output_format '{fmt}'. Supported: {sorted(SUPPORTED_TTS_FORMATS.keys())}")
+    return f
+
+
+def normalize_sample_rate(sample_rate: Optional[Any]) -> Optional[int]:
+    if sample_rate is None:
+        return None
+    try:
+        sr = int(sample_rate)
+    except Exception:
+        raise ValueError("sample_rate_hz must be an integer")
+    if not 8000 <= sr <= 48000:
+        raise ValueError("sample_rate_hz must be between 8000 and 48000")
+    return sr
+
+
+def finalize_audio(input_wav: str, fmt: str, sample_rate_hz: Optional[int]) -> Tuple[str, int, str]:
+    """
+    Optionally resample + transcode the WAV into the requested format.
+    Returns (path, size_bytes, content_type).
+    """
+    if fmt == "wav" and sample_rate_hz is None:
+        return input_wav, os.path.getsize(input_wav), SUPPORTED_TTS_FORMATS["wav"]
+
+    target_path = input_wav if fmt == "wav" else os.path.splitext(input_wav)[0] + f".{fmt}"
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-i",
+        input_wav,
+    ]
+    if sample_rate_hz is not None:
+        cmd += ["-ar", str(sample_rate_hz)]
+
+    if fmt == "wav":
+        cmd += ["-acodec", "pcm_s16le", target_path]
+    elif fmt == "mp3":
+        cmd += ["-acodec", "libmp3lame", target_path]
+    elif fmt == "flac":
+        cmd += ["-acodec", "flac", target_path]
+    else:
+        raise ValueError(f"Unsupported output format {fmt}")
+
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return target_path, os.path.getsize(target_path), SUPPORTED_TTS_FORMATS[fmt]
 
 
 def _read_controls(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -634,8 +698,11 @@ def main() -> None:
         _, raw = item
         try:
             msg = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError:
             print("[tts-worker] invalid json message; skipping")
+            continue
+        except Exception as e:
+            print(f"[tts-worker] error decoding message: {e}")
             continue
 
         job_id = msg.get("job_id")
@@ -666,9 +733,22 @@ def main() -> None:
             print(f"[tts-worker] text_preprocess job={job_id} orig_len={len(o)} proc_len={len(p)} orig='{o[:160]}' proc='{p[:160]}'")
         voice_id = params.get("voice_id") or ""
         language = params.get("language") or "en"
-        fmt = params.get("output_format") or "wav"
+        try:
+            fmt = normalize_output_format(params.get("output_format"))
+        except ValueError as e:
+            mark_failed(job_id, "invalid_request", str(e))
+            continue
+        try:
+            sample_rate_hz = normalize_sample_rate(params.get("sample_rate_hz"))
+        except ValueError as e:
+            mark_failed(job_id, "invalid_request", str(e))
+            continue
 
-        voice_path = resolve_voice_path(voice_id)
+        try:
+            voice_path = resolve_voice_path(voice_id)
+        except ValueError as e:
+            mark_failed(job_id, "invalid_request", str(e))
+            continue
         if not os.path.isfile(voice_path):
             mark_failed(job_id, "invalid_request", f"Voice not found: {voice_id}")
             continue
@@ -750,11 +830,16 @@ def main() -> None:
             # DSP is optional; fall back to raw XTTS output.
             print(f"[tts-worker] DSP failed for {job_id}: {e}")
 
-        object_name = f"outputs/{job_id}/audio.wav"
-        size = os.path.getsize(out_wav)
-        with open(out_wav, "rb") as f:
-            m.put_object(MINIO_BUCKET, object_name, f, length=size, content_type="audio/wav")
-        mark_succeeded(job_id, MINIO_BUCKET, object_name, "audio/wav", size)
+        try:
+            final_path, final_size, content_type = finalize_audio(out_wav, fmt, sample_rate_hz)
+        except Exception as e:
+            mark_failed(job_id, "processing_error", f"Failed to finalize audio: {e}")
+            continue
+
+        object_name = f"outputs/{job_id}/audio.{fmt}"
+        with open(final_path, "rb") as f:
+            m.put_object(MINIO_BUCKET, object_name, f, length=final_size, content_type=content_type)
+        mark_succeeded(job_id, MINIO_BUCKET, object_name, content_type, final_size)
         print(f"[tts-worker] succeeded {job_id} -> {MINIO_BUCKET}/{object_name}")
 
         # Cleanup output file from shared volume (optional; keep if you want local caching)
@@ -762,6 +847,11 @@ def main() -> None:
             os.remove(out_wav)
         except Exception:
             pass
+        if final_path != out_wav:
+            try:
+                os.remove(final_path)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

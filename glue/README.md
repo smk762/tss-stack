@@ -18,7 +18,7 @@ docker compose up -d --build
 ### Quickstart (local `.venv`)
 
 ```bash
-cd /home/jasmine/tss-stack
+cd /path/to/tss-stack
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip

@@ -78,8 +78,11 @@ def main() -> None:
         _, raw = item
         try:
             msg = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError:
             print("[stt-worker] invalid json message; skipping")
+            continue
+        except Exception as e:
+            print(f"[stt-worker] error decoding message: {e}")
             continue
 
         job_id = msg.get("job_id")

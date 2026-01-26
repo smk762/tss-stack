@@ -12,6 +12,8 @@ info:
 servers:
   - url: http://localhost:9001
     description: Local dev
+security:
+  - AccessJWT: []
 tags:
   - name: capabilities
   - name: stt
@@ -232,6 +234,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
 components:
+  securitySchemes:
+    AccessJWT:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: >
+        Cloudflare Access / Zero Trust JWT. Required when exposing the stack remotely;
+        clients should present the Access token issued for this application.
   headers:
     XRequestId:
       description: Correlation id for troubleshooting.

@@ -321,8 +321,11 @@ def main() -> None:
         queue_name, raw = item
         try:
             msg = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError:
             print(f"[whisper-worker] invalid json message from {queue_name}; skipping")
+            continue
+        except Exception as e:
+            print(f"[whisper-worker] error decoding message from {queue_name}: {e}")
             continue
 
         job_id = msg.get("job_id")

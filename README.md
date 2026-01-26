@@ -27,7 +27,21 @@ docker compose up -d --build
 - MinIO S3 API: `http://localhost:9010`
 - MinIO console: `http://localhost:9011`
 
+Required secrets (no insecure defaults):
+
+```bash
+export MINIO_ROOT_USER=<choose-unique-user>
+export MINIO_ROOT_PASSWORD=<choose-strong-password>
+```
+
 Note: the gateway returns presigned URLs signed for `localhost:9010` by default via `MINIO_PRESIGN_ENDPOINT`.
+
+### Cloudflare Access (Zero Trust)
+
+- Configure a Cloudflare Access application that fronts the gateway (and glue if exposed).  
+- Ensure your reverse proxy forwards the `Cf-Access-Jwt-Assertion` header to the services; the OpenAPI contract now declares this as the auth scheme.  
+- Lock down host ports as needed (e.g., only expose via your Access tunnel and avoid publishing Redis/MinIO directly).  
+- Clients must present the Access JWT on every request; browser-based clients get it from the Access login flow, headless clients should supply the token in that header.  
 
 ## Scaling strategy (minimize friction)
 

@@ -251,9 +251,18 @@ Chunk size for streaming TTS output.
 
 ---
 
+### `engine_temperature`
+
+Raw engine sampling temperature (best-effort passthrough; engine-dependent).
+
+* **Range:** 0.0–1.0
+* **Default:** engine-defined
+* **Stage:** engine control (ignored if unsupported)
+
+---
+
 ## 7. Sliders Explicitly Excluded (For Now)
 
-* Raw engine temperature
 * Phoneme‑level controls
 * Numeric “gender” sliders
 * Emotion labels unless natively supported
@@ -262,14 +271,14 @@ Chunk size for streaming TTS output.
 
 ## 8. Recommended UI Grouping
 
-**Voice**
+### Voice
 
 * voice preset
 * formant_shift
 * pitch_semitones
 * breathiness
 
-**Delivery**
+### Delivery
 
 * speed
 * prosody_depth
@@ -277,19 +286,19 @@ Chunk size for streaming TTS output.
 * pause_ms
 * sentence_pause_ms
 
-**Expression**
+### Expression
 
 * energy
 * intensity
 * variation
 
-**Clarity**
+### Clarity
 
 * articulation
 * clarity_boost
 * loudness_db
 
-**Advanced (collapsed)**
+### Advanced (collapsed)
 
 * punctuation_weight
 * sentence_split_aggressiveness
