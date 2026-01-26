@@ -15,7 +15,7 @@ RUN apt-get update && \
       git && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+RUN pip install --no-cache-dir --upgrade pip 'setuptools<81' wheel && \
     pip install --no-cache-dir \
       transformers==4.37.2 \
       xtts-api-server==0.8.0 \
