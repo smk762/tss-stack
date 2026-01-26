@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TSS Dev UI</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --card: rgba(255,255,255,0.06);
+        --card2: rgba(255,255,255,0.04);
+        --border: rgba(255,255,255,0.14);
+        --text: rgba(255,255,255,0.92);
+        --muted: rgba(255,255,255,0.70);
+        --accent: #7c5cff;
+        --accent2: #2ee9a3;
+        --shadow: 0 10px 30px rgba(0,0,0,0.35);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f7f8fc;
+          --card: rgba(0,0,0,0.03);
+          --card2: rgba(0,0,0,0.02);
+          --border: rgba(0,0,0,0.10);
+          --text: rgba(0,0,0,0.88);
+          --muted: rgba(0,0,0,0.62);
+          --shadow: 0 10px 24px rgba(0,0,0,0.10);
+        }
+      }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 0;
+        color: var(--text);
+        background:
+          radial-gradient(1000px 500px at 20% 0%, rgba(124,92,255,0.22), transparent 55%),
+          radial-gradient(900px 600px at 90% 10%, rgba(46,233,163,0.14), transparent 60%),
+          var(--bg);
+      }
+      .page {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 28px 18px 44px;
+      }
+      h2 { margin: 0 0 6px; letter-spacing: -0.02em; }
+      p { margin: 0 0 14px; color: var(--muted); }
+      textarea {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 140px;
+        font-size: 16px;
+        padding: 12px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: var(--card2);
+        color: var(--text);
+        outline: none;
+        margin-top: 6px;
+        margin-bottom: 12px;
+        resize: none;
+      }
+      textarea:focus { border-color: rgba(124,92,255,0.6); box-shadow: 0 0 0 4px rgba(124,92,255,0.15); }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+      button {
+        padding: 10px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: linear-gradient(135deg, rgba(124,92,255,0.20), rgba(46,233,163,0.10));
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover { border-color: rgba(124,92,255,0.55); }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      select, input {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--card2);
+        color: var(--text);
+        outline: none;
+      }
+      select:focus, input:focus { border-color: rgba(124,92,255,0.6); box-shadow: 0 0 0 4px rgba(124,92,255,0.12); }
+      .card {
+        margin-top: 14px;
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--card);
+        box-shadow: var(--shadow);
+      }
+      .cardHead { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+      .cardHead h3 { margin: 0; letter-spacing: -0.01em; }
+      .subtle { color: var(--muted); font-size: 13px; }
+
+      .controlsWrap { display: grid; gap: 10px; margin-top: 10px; }
+      details.group {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--card2);
+        overflow: hidden;
+      }
+      details.group summary {
+        cursor: pointer;
+        user-select: none;
+        padding: 10px 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        list-style: none;
+      }
+      details.group summary::-webkit-details-marker { display:none; }
+      .groupTitle { font-weight: 700; }
+      .groupMeta { color: var(--muted); font-size: 12px; }
+      .grid { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 10px 12px 12px; }
+      .control { display: grid; grid-template-columns: 190px 1fr 92px; gap: 10px; align-items: center; }
+      .control label { font-weight: 650; }
+      .control .help { grid-column: 1 / -1; margin-top: -6px; font-size: 12px; color: var(--muted); }
+      .control input[type="range"] { width: 100%; padding: 0; }
+      .number { text-align: right; font-variant-numeric: tabular-nums; }
+
+      .status { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
+      audio { width: 100%; margin-top: 12px; border-radius: 14px; }
+      .pill {
+        display:inline-flex; gap:8px; align-items:center;
+        padding: 6px 10px; border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--card2);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .right { margin-left: auto; }
+      a.btnLink {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      a.btnLink[aria-disabled="true"] {
+        opacity: 0.6;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="row" style="align-items:flex-end; gap:10px;">
+        <div>
+          <h2>TSS Dev UI</h2>
+          <p>Contract-driven sliders (from <b>/v1/capabilities</b>) grouped per VOICES.md Phase 8.</p>
+        </div>
+        <span class="pill right" id="capsPill">Loading capabilities…</span>
+      </div>
+
+      <div class="card">
+        <div class="cardHead">
+          <h3>Prompt</h3>
+          <span class="subtle">Tip: artifacts? try lower <b>engine_temperature</b>.</span>
+        </div>
+        <label for="text" class="subtle" style="display:block; margin-top:8px;">Text</label>
+        <textarea id="text">Hello! This is a browser playback test.</textarea>
+
+        <div class="row">
+          <label for="voice">Voice</label>
+          <select id="voice">
+            <option value="female" selected>female</option>
+            <option value="male">male</option>
+            <option value="inara">inara</option>
+          </select>
+
+          <button id="btn">Test voice</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardHead">
+          <div>
+            <h3>Voice controls</h3>
+            <div class="subtle" id="controlsHint"></div>
+          </div>
+          <button id="reset">Reset</button>
+        </div>
+        <div id="controls" class="controlsWrap"></div>
+      </div>
+
+      <div class="card">
+        <div class="cardHead">
+          <h3>Output</h3>
+          <div class="row" style="margin:0; gap:10px;">
+            <a id="downloadBtn" class="pill btnLink" href="#" download aria-disabled="true" title="Run a job to enable download">Download audio</a>
+            <span class="pill" id="lastJobPill">No job yet</span>
+          </div>
+        </div>
+        <audio id="player" controls></audio>
+        <div id="status" class="status"></div>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const btn = document.getElementById("btn");
+      const resetBtn = document.getElementById("reset");
+      const player = document.getElementById("player");
+      const controlsEl = document.getElementById("controls");
+      const controlsHintEl = document.getElementById("controlsHint");
+      const capsPillEl = document.getElementById("capsPill");
+      const lastJobPillEl = document.getElementById("lastJobPill");
+      const downloadBtnEl = document.getElementById("downloadBtn");
+
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      let capabilities = null;
+      const controlsState = {}; // key -> { value, spec }
+
+      const CONTROL_LABELS = {
+        // Voice
+        formant_shift: "Voice body",
+        pitch_semitones: "Pitch (semitones)",
+        breathiness: "Breathiness",
+        // Delivery
+        speed: "Speed",
+        pause_ms: "Trailing pause (ms)",
+        sentence_pause_ms: "Sentence pause (ms)",
+        pause_variance_ms: "Pause variance (ms)",
+        // Expression
+        energy: "Energy",
+        intensity: "Intensity",
+        variation: "Variation",
+        emphasis_strength: "Emphasis strength",
+        // Clarity
+        clarity_boost: "Clarity boost",
+        articulation: "Articulation",
+        loudness_db: "Loudness (dB)",
+        nasality: "Nasality",
+        // Text handling / advanced
+        punctuation_weight: "Punctuation weight",
+        sentence_split_aggressiveness: "Sentence split",
+        repeat_emphasis: "Repeat emphasis",
+        // Advanced
+        post_eq_profile: "EQ profile",
+        latency_mode: "Latency mode",
+        stream_chunk_ms: "Stream chunk (ms)",
+        engine_temperature: "Engine temperature",
+      };
+
+      const CONTROL_HELP = {
+        formant_shift: "Perceived vocal resonance (post-DSP).",
+        engine_temperature: "Engine-dependent randomness. Higher = more variation; lower = more stable.",
+        latency_mode: "Maps to DSP depth + default streaming chunk size.",
+        stream_chunk_ms: "Streaming delivery chunk size (Phase 1 streaming).",
+        punctuation_weight: "How strongly punctuation influences delivery (text shaping).",
+        sentence_split_aggressiveness: "How aggressively long text is chunked (text shaping).",
+      };
+
+      const GROUPS = [
+        { id: "voice", title: "Voice", keys: ["formant_shift", "pitch_semitones", "breathiness"] },
+        { id: "delivery", title: "Delivery", keys: ["speed", "pause_ms", "sentence_pause_ms", "pause_variance_ms"] },
+        { id: "expression", title: "Expression", keys: ["energy", "intensity", "variation", "emphasis_strength"] },
+        { id: "clarity", title: "Clarity", keys: ["articulation", "clarity_boost", "loudness_db", "nasality"] },
+        {
+          id: "advanced",
+          title: "Advanced (collapsed)",
+          keys: ["punctuation_weight", "sentence_split_aggressiveness", "repeat_emphasis", "post_eq_profile", "latency_mode", "stream_chunk_ms", "engine_temperature"],
+          collapsed: true,
+        },
+      ];
+
+      function setStatus(obj) {
+        statusEl.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+      }
+
+      function clamp(v, min, max) {
+        return Math.min(max, Math.max(min, v));
+      }
+
+      function toNumberMaybe(x) {
+        if (x === null || x === undefined || x === "") return null;
+        const n = Number(x);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function labelForKey(key) {
+        return CONTROL_LABELS[key] || key;
+      }
+
+      function helpForKey(key) {
+        return CONTROL_HELP[key] || "";
+      }
+
+      function renderControlsFromCapabilities(caps) {
+        controlsEl.innerHTML = "";
+        controlsHintEl.textContent = "";
+        Object.keys(controlsState).forEach((k) => delete controlsState[k]);
+
+        const spec = caps?.tts?.controls;
+        if (!spec) {
+          controlsHintEl.textContent = "No controls advertised by /v1/capabilities.";
+          return;
+        }
+
+        const entries = Object.entries(spec).filter(([, cfg]) => cfg?.enabled !== false);
+        if (!entries.length) {
+          controlsHintEl.textContent = "No controls advertised by /v1/capabilities.";
+          return;
+        }
+
+        const enabledSpec = Object.fromEntries(entries);
+
+        function renderControlRow(key, cfg) {
+          // Enum control (select)
+          if (Array.isArray(cfg?.options) && cfg.options.length) {
+            const def = cfg.default ?? cfg.options[0];
+            controlsState[key] = { value: String(def), spec: { kind: "enum", options: cfg.options, def: String(def) } };
+
+            const row = document.createElement("div");
+            row.className = "control";
+
+            const lab = document.createElement("label");
+            lab.textContent = labelForKey(key);
+
+            const sel = document.createElement("select");
+            sel.dataset.key = key;
+            for (const opt of cfg.options) {
+              const o = document.createElement("option");
+              o.value = opt;
+              o.textContent = opt;
+              if (String(opt) === String(def)) o.selected = true;
+              sel.appendChild(o);
+            }
+
+            const val = document.createElement("div");
+            val.className = "number";
+            val.textContent = String(def);
+
+            sel.addEventListener("change", (e) => {
+              const k = e.target.dataset.key;
+              const v = String(e.target.value);
+              controlsState[k].value = v;
+              val.textContent = v;
+            });
+
+            row.appendChild(lab);
+            row.appendChild(sel);
+            row.appendChild(val);
+
+            const help = helpForKey(key);
+            if (help) {
+              const h = document.createElement("div");
+              h.className = "help";
+              h.textContent = help;
+              row.appendChild(h);
+            }
+            return row;
+          }
+
+          const min = toNumberMaybe(cfg.min);
+          const max = toNumberMaybe(cfg.max);
+          const def = toNumberMaybe(cfg.default);
+          const step = toNumberMaybe(cfg.step) ?? 0.01;
+          if (min === null || max === null || def === null) return null;
+
+          controlsState[key] = { value: def, spec: { kind: "range", min, max, def, step } };
+
+          const row = document.createElement("div");
+          row.className = "control";
+
+          const lab = document.createElement("label");
+          lab.textContent = labelForKey(key);
+
+          const input = document.createElement("input");
+          input.type = "range";
+          input.min = String(min);
+          input.max = String(max);
+          input.step = String(step);
+          input.value = String(def);
+          input.dataset.key = key;
+
+          const num = document.createElement("input");
+          num.type = "number";
+          num.className = "number";
+          num.min = String(min);
+          num.max = String(max);
+          num.step = String(step);
+          num.value = String(def);
+          num.dataset.key = key;
+
+          function setValue(v) {
+            const cfg2 = controlsState[key]?.spec;
+            if (!cfg2) return;
+            const vv = clamp(Number(v), cfg2.min, cfg2.max);
+            controlsState[key].value = vv;
+            input.value = String(vv);
+            num.value = String(vv);
+          }
+
+          input.addEventListener("input", (e) => setValue(e.target.value));
+          num.addEventListener("input", (e) => setValue(e.target.value));
+
+          row.appendChild(lab);
+          row.appendChild(input);
+          row.appendChild(num);
+
+          const help = helpForKey(key);
+          if (help) {
+            const h = document.createElement("div");
+            h.className = "help";
+            h.textContent = help;
+            row.appendChild(h);
+          }
+          return row;
+        }
+
+        // Render grouped per VOICES.md Phase 8; any unknown keys fall into Advanced.
+        const assigned = new Set();
+        for (const g of GROUPS) {
+          const keys = g.keys.filter((k) => enabledSpec[k]);
+          for (const k of keys) assigned.add(k);
+
+          if (!keys.length && g.id !== "advanced") continue;
+
+          const det = document.createElement("details");
+          det.className = "group";
+          if (!g.collapsed) det.open = true;
+
+          const sum = document.createElement("summary");
+          const left = document.createElement("div");
+          left.className = "groupTitle";
+          left.textContent = g.title;
+          const right = document.createElement("div");
+          right.className = "groupMeta";
+          right.textContent = keys.length ? `${keys.length} controls` : "—";
+          sum.appendChild(left);
+          sum.appendChild(right);
+          det.appendChild(sum);
+
+          const grid = document.createElement("div");
+          grid.className = "grid";
+
+          for (const key of keys) {
+            const row = renderControlRow(key, enabledSpec[key]);
+            if (row) grid.appendChild(row);
+          }
+
+          // Unknown enabled keys go to Advanced.
+          if (g.id === "advanced") {
+            const unknown = Object.keys(enabledSpec)
+              .filter((k) => !assigned.has(k))
+              .sort((a, b) => a.localeCompare(b));
+            for (const key of unknown) {
+              const row = renderControlRow(key, enabledSpec[key]);
+              if (row) grid.appendChild(row);
+            }
+          }
+
+          det.appendChild(grid);
+          controlsEl.appendChild(det);
+        }
+
+        controlsHintEl.textContent = "These ranges come from /v1/capabilities (deployment-controlled).";
+      }
+
+      function currentControlsPayload() {
+        const out = {};
+        for (const [k, v] of Object.entries(controlsState)) {
+          if (v?.spec && v?.value !== null && v?.value !== undefined) out[k] = v.value;
+        }
+        return Object.keys(out).length ? out : null;
+      }
+
+      async function pollJob(statusUrl) {
+        for (let i = 0; i < 200; i++) {
+          const r = await fetch(statusUrl, { headers: { "Accept": "application/json" } });
+          const j = await r.json();
+          setStatus(j);
+          if (j.status === "succeeded") return j;
+          if (j.status === "failed" || j.status === "cancelled") throw new Error(j?.error?.message || j.status);
+          await sleep(300);
+        }
+        throw new Error("Timed out waiting for job");
+      }
+
+      resetBtn.addEventListener("click", () => {
+        if (!capabilities) return;
+        renderControlsFromCapabilities(capabilities);
+      });
+
+      (async () => {
+        try {
+          const r = await fetch("/v1/capabilities");
+          capabilities = await r.json();
+          renderControlsFromCapabilities(capabilities);
+          const v = String(capabilities?.api_version || "v1");
+          capsPillEl.textContent = `Capabilities: ${v}`;
+        } catch (e) {
+          controlsHintEl.textContent = "Failed to load /v1/capabilities.";
+          capsPillEl.textContent = "Capabilities: failed";
+        }
+      })();
+
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          const text = document.getElementById("text").value.trim();
+          const voice = document.getElementById("voice").value;
+          if (!text) throw new Error("Text is empty");
+
+          player.removeAttribute("src");
+          player.load();
+          downloadBtnEl.setAttribute("aria-disabled", "true");
+          downloadBtnEl.setAttribute("title", "Run a job to enable download");
+          downloadBtnEl.removeAttribute("download");
+          downloadBtnEl.href = "#";
+
+          const body = { text, voice_id: voice, output_format: "wav" };
+          const controls = currentControlsPayload();
+          if (controls) body.controls = controls;
+          // playback side-effects removed for bare-metal/local audio setups
+
+          setStatus("Submitting…");
+          const r = await fetch("/v1/tts/synthesize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const enq = await r.json();
+          if (!r.ok) throw new Error(enq?.error?.message || "Request failed");
+          setStatus(enq);
+
+          const job = await pollJob(enq.status_url);
+          const jobId = job?.id;
+          const url = job?.result?.result_url;
+          if (!jobId) throw new Error("Missing job id");
+
+          // Prefer streaming endpoint (same origin); fall back to presigned URL.
+          const streamUrl = `/v1/tts/stream/${jobId}`;
+          player.src = streamUrl;
+          lastJobPillEl.textContent = `job: ${jobId}`;
+          lastJobPillEl.title = url || "";
+
+          // Enable download using the streaming endpoint (same origin).
+          downloadBtnEl.href = streamUrl;
+          downloadBtnEl.setAttribute("download", `${jobId}.wav`);
+          downloadBtnEl.setAttribute("aria-disabled", "false");
+          downloadBtnEl.setAttribute("title", "Download the synthesized audio");
+          await player.play();
+        } catch (e) {
+          setStatus({ error: String(e) });
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
+
