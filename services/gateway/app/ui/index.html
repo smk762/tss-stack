@@ -120,6 +120,15 @@
 
       .status { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
       audio { width: 100%; margin-top: 12px; border-radius: 14px; }
+      pre {
+        background: var(--card2);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--text);
+      }
       .pill {
         display:inline-flex; gap:8px; align-items:center;
         padding: 6px 10px; border-radius: 999px;
@@ -194,6 +203,44 @@
         <audio id="player" controls></audio>
         <div id="status" class="status"></div>
       </div>
+
+      <div class="card">
+        <div class="cardHead">
+          <div>
+            <h3>Speech to text (upload or mic)</h3>
+            <div class="subtle">Uploads go to /v1/stt/transcribe; results show below. Mic capture requires HTTPS/localhost.</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="sttFile">Upload audio/video</label>
+          <input type="file" id="sttFile" accept="audio/*,video/mp4" />
+          <label for="sttFormat">Output</label>
+          <select id="sttFormat">
+            <option value="json">json</option>
+            <option value="text" selected>text</option>
+            <option value="srt">srt</option>
+            <option value="vtt">vtt</option>
+          </select>
+          <button id="sttUploadBtn">Transcribe upload</button>
+        </div>
+
+        <div class="row">
+          <label class="subtle">Microphone</label>
+          <button id="sttMicBtn">Record mic</button>
+          <span id="sttMicHint" class="subtle">Idle</span>
+          <label for="sttMicFormat">Output</label>
+          <select id="sttMicFormat">
+            <option value="text" selected>text</option>
+            <option value="json">json</option>
+            <option value="srt">srt</option>
+            <option value="vtt">vtt</option>
+          </select>
+        </div>
+
+        <div id="sttStatus" class="status"></div>
+        <pre id="sttResult" aria-label="Transcription result"></pre>
+      </div>
     </div>
 
     <script>
@@ -206,10 +253,20 @@
       const capsPillEl = document.getElementById("capsPill");
       const lastJobPillEl = document.getElementById("lastJobPill");
       const downloadBtnEl = document.getElementById("downloadBtn");
+      const sttStatusEl = document.getElementById("sttStatus");
+      const sttResultEl = document.getElementById("sttResult");
+      const sttFileEl = document.getElementById("sttFile");
+      const sttFormatEl = document.getElementById("sttFormat");
+      const sttUploadBtn = document.getElementById("sttUploadBtn");
+      const sttMicBtn = document.getElementById("sttMicBtn");
+      const sttMicFormatEl = document.getElementById("sttMicFormat");
+      const sttMicHintEl = document.getElementById("sttMicHint");
 
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let capabilities = null;
       const controlsState = {}; // key -> { value, spec }
+      let mediaRecorder = null;
+      let mediaChunks = [];
 
       const CONTROL_LABELS = {
         // Voice
@@ -478,6 +535,43 @@
         throw new Error("Timed out waiting for job");
       }
 
+      function setSttStatus(msg) {
+        sttStatusEl.textContent = typeof msg === "string" ? msg : JSON.stringify(msg, null, 2);
+      }
+
+      async function fetchResultPreview(job) {
+        const url = job?.result?.result_url;
+        if (!url) return null;
+        try {
+          const r = await fetch(url);
+          const ct = (r.headers.get("Content-Type") || "").toLowerCase();
+          if (ct.includes("application/json")) {
+            const j = await r.json();
+            if (typeof j.text === "string") return j.text;
+            return JSON.stringify(j, null, 2);
+          }
+          const t = await r.text();
+          return t;
+        } catch {
+          return null;
+        }
+      }
+
+      async function enqueueSttFromBlob(blob, outputFormat) {
+        const fd = new FormData();
+        fd.append("audio", blob, "capture.webm");
+        fd.append("output_format", outputFormat || "text");
+        setSttStatus("Submitting…");
+        const r = await fetch("/v1/stt/transcribe", { method: "POST", body: fd });
+        const enq = await r.json();
+        if (!r.ok) throw new Error(enq?.error?.message || "Request failed");
+        setSttStatus(enq);
+        const job = await pollJob(enq.status_url);
+        setSttStatus(job);
+        const preview = await fetchResultPreview(job);
+        sttResultEl.textContent = preview || "Result ready; download from result_url.";
+      }
+
       resetBtn.addEventListener("click", () => {
         if (!capabilities) return;
         renderControlsFromCapabilities(capabilities);
@@ -546,6 +640,69 @@
           setStatus({ error: String(e) });
         } finally {
           btn.disabled = false;
+        }
+      });
+
+      sttUploadBtn.addEventListener("click", async () => {
+        sttUploadBtn.disabled = true;
+        try {
+          const file = sttFileEl.files?.[0];
+          if (!file) throw new Error("Choose an audio/video file");
+          const fd = new FormData();
+          fd.append("audio", file);
+          fd.append("audio_mime_type", file.type || "application/octet-stream");
+          fd.append("output_format", sttFormatEl.value || "text");
+          setSttStatus("Submitting upload…");
+          const r = await fetch("/v1/stt/transcribe", { method: "POST", body: fd });
+          const enq = await r.json();
+          if (!r.ok) throw new Error(enq?.error?.message || "Request failed");
+          setSttStatus(enq);
+          const job = await pollJob(enq.status_url);
+          setSttStatus(job);
+          const preview = await fetchResultPreview(job);
+          sttResultEl.textContent = preview || "Result ready; download from result_url.";
+        } catch (e) {
+          setSttStatus({ error: String(e) });
+        } finally {
+          sttUploadBtn.disabled = false;
+        }
+      });
+
+      sttMicBtn.addEventListener("click", async () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+          mediaRecorder.stop();
+          sttMicHintEl.textContent = "Stopping…";
+          sttMicBtn.disabled = true;
+          return;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaChunks = [];
+          mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) mediaChunks.push(e.data);
+          };
+          mediaRecorder.onstop = async () => {
+            try {
+              sttMicHintEl.textContent = "Processing…";
+              const blob = new Blob(mediaChunks, { type: "audio/webm" });
+              await enqueueSttFromBlob(blob, sttMicFormatEl.value || "text");
+            } catch (e) {
+              setSttStatus({ error: String(e) });
+            } finally {
+              stream.getTracks().forEach((t) => t.stop());
+              mediaRecorder = null;
+              sttMicBtn.disabled = false;
+              sttMicBtn.textContent = "Record mic";
+              sttMicHintEl.textContent = "Idle";
+            }
+          };
+          mediaRecorder.start();
+          sttMicBtn.textContent = "Stop recording";
+          sttMicHintEl.textContent = "Recording…";
+        } catch (e) {
+          setSttStatus({ error: "Mic error: " + e });
         }
       });
     </script>
