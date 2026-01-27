@@ -1,14 +1,112 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9010:9000"   # S3 API
+      - "9011:9001"   # Console UI
+
+  gateway:
+    build:
+      context: ./services/gateway
+    container_name: gateway
+    restart: unless-stopped
+    environment:
+      - ENV=dev
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - MINIO_PRESIGN_ENDPOINT=${MINIO_PRESIGN_ENDPOINT:-localhost:9010}
+      - MINIO_PRESIGN_SECURE=false
+      - RESULT_URL_TTL_SECONDS=${RESULT_URL_TTL_SECONDS:-900}
+      - STT_MAX_BYTES=${STT_MAX_BYTES:-52428800}
+    volumes:
+      - jobs_data:/data
+    ports:
+      - "9001:9001"
+    depends_on:
+      - redis
+      - minio
+
+  stt-worker:
+    build:
+      context: ./services/stt-worker
+    container_name: stt-worker
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+    volumes:
+      - jobs_data:/data
+    depends_on:
+      - redis
+      - minio
+      - gateway
+
+  tts-worker:
+    build:
+      context: ./services/tts-worker
+    container_name: tts-worker
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+      - XTTS_URL=http://xtts:8020/tts_to_file
+      - VOICES_DIR=/voices
+      - XTTS_OUTPUT_DIR=/output
+    volumes:
+      - jobs_data:/data
+      - ./voices:/voices:ro
+      - xtts_output:/output
+    depends_on:
+      - redis
+      - minio
+      - gateway
+      - xtts
+
   xtts:
-    image: daswer123/xtts-api-server:latest
+    build:
+      context: ./services/xtts
+    image: xtts-api-server:0.8.0-cuda12.1
     container_name: xtts
     restart: unless-stopped
     environment:
-      - DEVICE=cuda:0                  # set to cpu if you don’t want GPU
+      - CUDA_VISIBLE_DEVICES=${XTTS_CUDA_VISIBLE_DEVICES:-0}
+      - DEVICE=${XTTS_DEVICE:-cpu}     # cpu by default; set to cuda:0 when enabling GPU
+      - NVIDIA_VISIBLE_DEVICES=${XTTS_CUDA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - MODEL_DIR=/models
       - HF_HOME=/models/.cache/hf      # optional cache location
-    # comment the next line if not using GPU:
-    gpus: all
     volumes:
       - xtts_models:/models
       - xtts_output:/output
@@ -24,39 +122,63 @@ services:
     restart: unless-stopped
     environment:
       - XTTS_URL=http://xtts:8020/tts_to_file
-      - SNAPCAST_RPC=http://snapserver:1780/jsonrpc
-      - SNAPCAST_FIFO=/run/snapcast/snapfifo
       - VOICES_DIR=/voices
       - XTTS_LANG=en
       - XTTS_OUTPUT_DIR=/output
+      - PYTHONDONTWRITEBYTECODE=1
     volumes:
       - ./glue:/app                    # dev: hot-reload if your Dockerfile uses it
       - ./voices:/voices:ro
       - xtts_output:/output
-      - snapcast_run:/run/snapcast     # shared FIFO with snapserver
     command: uvicorn app:app --host 0.0.0.0 --port 9000 --reload --reload-dir /app
     ports:
       - "9000:9000"
     depends_on:
       - xtts
-      - snapserver
 
-  snapserver:
-    image: nolte/snapcast-server:latest
-    container_name: snapserver
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: whisper
     restart: unless-stopped
+    environment:
+      - ASR_MODEL=${WHISPER_MODEL:-base}
+      - ASR_ENGINE=openai_whisper
+      - ASR_MODEL_PATH=/models
     volumes:
-      - ./snapcast/snapserver.conf:/etc/snapserver.conf:ro
-      - snapcast_run:/run/snapcast     # will contain /run/snapcast/snapfifo
-      - snapcast_state:/var/lib/snapserver
+      - whisper_models:/models
     ports:
-      - "1704:1704/udp"
-      - "1704:1704/tcp"
-      - "1705:1705/tcp"
-      - "1780:1780/tcp"
+      - "9002:9000"
+
+  whisper-worker:
+    build:
+      context: ./services/whisper-worker
+    container_name: whisper-worker
+    restart: unless-stopped
+    environment:
+      - DATA_DIR=/data
+      - JOBS_DB_PATH=/data/jobs.db
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
+      - WHISPER_URL=http://whisper:9000
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - WHISPER_LANGUAGE=${WHISPER_LANGUAGE:-auto}
+      - QUEUE_STT=queue:stt.transcribe
+      - QUEUE_WHISPER=queue:whisper.transcribe
+    volumes:
+      - jobs_data:/data
+    depends_on:
+      - redis
+      - minio
+      - gateway
+      - whisper
 
 volumes:
+  jobs_data:
+  minio_data:
   xtts_models:
   xtts_output:
-  snapcast_run:
-  snapcast_state:
+  whisper_models:
