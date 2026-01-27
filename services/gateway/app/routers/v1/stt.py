@@ -102,7 +102,7 @@ async def transcribe(
 
     q = RedisQueue()
     await q.enqueue(
-        config.QUEUE_STT,
+        config.QUEUE_WHISPER,
         {
             "job_id": job_id,
             "type": "stt.transcribe",

@@ -38,6 +38,7 @@ IDEMPOTENCY_TTL_SECONDS = env_int("IDEMPOTENCY_TTL_SECONDS", 60)
 REDIS_URL = env_str("REDIS_URL", "redis://redis:6379/0")
 QUEUE_STT = env_str("QUEUE_STT", "queue:stt.transcribe")
 QUEUE_TTS = env_str("QUEUE_TTS", "queue:tts.synthesize")
+QUEUE_WHISPER = env_str("QUEUE_WHISPER", "queue:whisper.transcribe")
 
 # MinIO
 MINIO_ENDPOINT = env_str("MINIO_ENDPOINT", "minio:9000")
@@ -60,7 +61,7 @@ STT_SUPPORTED_MIME_TYPES = [
     s.strip()
     for s in env_str(
         "STT_SUPPORTED_MIME_TYPES",
-        "audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/webm,audio/ogg",
+        "audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/webm,audio/ogg,video/mp4,video/quicktime",
     ).split(",")
     if s.strip()
 ]
