@@ -17,6 +17,9 @@ permissions:
 
 jobs:
   docker_release:
+    env:
+      MINIO_ROOT_USER: ci
+      MINIO_ROOT_PASSWORD: ci-minio
     strategy:
       fail-fast: false
       matrix:
