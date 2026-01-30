@@ -10,11 +10,6 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  DOCKERHUB_ORG: ${{ vars.DOCKERHUB_ORG || github.repository_owner }}
-  COMPOSE_FILES: docker-compose.yml
-  TRIVY_FAIL_SEVERITY: CRITICAL,HIGH
-
 permissions:
   contents: read
 
@@ -37,9 +32,9 @@ jobs:
     name: ${{ matrix.name }}
     uses: smk762/gha-docker-shared-ci/.github/workflows/docker-ci.yml@v1
     with:
-      image: ${{ env.DOCKERHUB_ORG }}/tss-stack-${{ matrix.name }}
+      image: ${{ vars.DOCKERHUB_ORG || github.repository_owner }}/tss-stack-${{ matrix.name }}
       context: ${{ matrix.context }}
       dockerfile: Dockerfile
-      compose_files: ${{ env.COMPOSE_FILES }}
-      trivy_fail_severity: ${{ env.TRIVY_FAIL_SEVERITY }}
+      compose_files: docker-compose.yml
+      trivy_fail_severity: CRITICAL,HIGH
     secrets: inherit

@@ -11,10 +11,6 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  DOCKERHUB_ORG: ${{ vars.DOCKERHUB_ORG || secrets.DOCKERHUB_USERNAME || github.repository_owner }}
-  TRIVY_FAIL_SEVERITY: CRITICAL
-
 permissions:
   contents: read
   id-token: write
@@ -38,12 +34,12 @@ jobs:
     name: ${{ matrix.name }}
     uses: smk762/gha-docker-shared-ci/.github/workflows/docker-release.yml@v1
     with:
-      image: ${{ env.DOCKERHUB_ORG }}/tss-stack-${{ matrix.name }}
+      image: ${{ vars.DOCKERHUB_ORG || secrets.DOCKERHUB_USERNAME || github.repository_owner }}/tss-stack-${{ matrix.name }}
       context: ${{ matrix.context }}
       dockerfile: Dockerfile
       platforms: linux/amd64
       push_on_main: true
       push_on_tag: true
       sign_with_cosign: false
-      trivy_fail_severity: ${{ env.TRIVY_FAIL_SEVERITY }}
+      trivy_fail_severity: CRITICAL
     secrets: inherit
