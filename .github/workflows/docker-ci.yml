@@ -6,6 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  MINIO_ROOT_USER: ci
+  MINIO_ROOT_PASSWORD: ci-minio
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -15,9 +19,6 @@ permissions:
 
 jobs:
   docker_ci:
-    env:
-      MINIO_ROOT_USER: ci
-      MINIO_ROOT_PASSWORD: ci-minio
     strategy:
       fail-fast: false
       matrix:
