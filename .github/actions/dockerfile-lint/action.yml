@@ -1,0 +1,14 @@
+name: Dockerfile Lint
+description: Lint a Dockerfile with hadolint
+inputs:
+  dockerfile:
+    description: Path to Dockerfile
+    required: false
+    default: Dockerfile
+runs:
+  using: composite
+  steps:
+    - name: Lint Dockerfile
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.dockerfile }}
