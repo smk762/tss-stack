@@ -37,6 +37,38 @@ export MINIO_ROOT_PASSWORD=<choose-strong-password>
 
 Note: the gateway returns presigned URLs signed for `localhost:9010` by default via `MINIO_PRESIGN_ENDPOINT`.
 
+### Optional: Snapcast announcements (profile + env flag)
+
+Snapcast is bundled but **disabled by default**.
+
+- **Enable Snapserver** (adds the `snapserver` service):
+
+```bash
+export COMPOSE_PROFILES=snapcast
+docker compose up -d --build
+```
+
+- **Enable announce endpoint in `xtts-glue`** (side-effectful playback):
+
+```bash
+export SNAPCAST_ENABLED=1
+export COMPOSE_PROFILES=snapcast
+docker compose up -d --build
+```
+
+Then you can broadcast an update over Snapcast via `xtts-glue`:
+
+```bash
+curl -sS http://localhost:9000/announce \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Status update. All systems online.","speaker":"female"}'
+```
+
+Snapcast ports (host):
+- `1704` TCP/UDP (audio)
+- `1705` TCP (control)
+- `1780` TCP (JSON-RPC)
+
 ### Cloudflare Access (Zero Trust)
 
 - Configure a Cloudflare Access application that fronts the gateway (and glue if exposed).  
@@ -56,3 +88,8 @@ So “scaling up” is mostly:
 - move SQLite → Postgres (gateway job store)
 - move MinIO → S3
 
+## CI/CD
+
+- GitHub Actions use the shared reusable workflows from [`smk762/gha-docker-shared-ci`](https://github.com/smk762/gha-docker-shared-ci) to lint Dockerfiles, validate compose, build, and scan images.
+- Configure repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Docker Hub access token). Set repository variable `DOCKERHUB_ORG` to the Docker Hub org/user used for publishing (defaults to the GitHub org/user).
+- CI runs on pull requests and pushes to `main`; release builds push images on `main` and `v*` tags for: `gateway`, `xtts`, `xtts-glue`, `tts-worker`, `whisper-worker`.
