@@ -2,8 +2,8 @@
 
 `glue` is a small FastAPI service intended to run alongside the rest of the stack.
 
-- **No Snapcast**: this branch removes Snapcast playback entirely.
-- **Optional**: a tiny XTTS “synthesize to file” helper endpoint (no playback).
+- **Optional Snapcast**: playback/announce endpoints are disabled by default; enable with `SNAPCAST_ENABLED=1` and the `snapcast` compose profile.
+- **XTTS helper**: synthesize to file, plus optional Snapcast announce streaming.
 
 ### Quickstart (docker compose)
 
@@ -33,6 +33,11 @@ uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 - **Health**: `GET /health`
 - **Voices**: `GET /voices` (lists `*.wav` under `VOICES_DIR`, typically mounted from `./voices`)
 - **Synthesize to file**: `POST /tts_to_file` (writes into `XTTS_OUTPUT_DIR`, typically mounted from `xtts_output`)
+- **Snapcast (optional)**:
+  - `GET /snapcast/status` — raw Snapserver status (streams, groups, clients)
+  - `GET /snapcast/clients` — simplified list of connected clients with group/stream info
+  - `GET /snapcast/info` — Snapserver version + RPC version
+  - `POST /announce` — synthesize then stream to Snapcast FIFO (requires `SNAPCAST_ENABLED=1`)
 
 ### Examples
 
@@ -47,5 +52,10 @@ curl -sS http://localhost:9000/tts_to_file \
     "speaker": "female",
     "language": "en"
   }' | jq
+
+# Snapcast examples (requires SNAPCAST_ENABLED=1 and snapserver running)
+curl -sS http://localhost:9000/snapcast/status | jq '.status.server.groups[0].clients'
+curl -sS http://localhost:9000/snapcast/clients | jq
+curl -sS http://localhost:9000/snapcast/info | jq
 ```
 
