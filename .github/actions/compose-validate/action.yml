@@ -12,6 +12,9 @@ runs:
       name: Validate compose config
       run: |
         set -euo pipefail
+        # Provide safe defaults so compose config can interpolate required vars during CI
+        export MINIO_ROOT_USER="${MINIO_ROOT_USER:-ci}"
+        export MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-ci-minio}"
         IFS=',' read -ra FILES <<< "${{ inputs.files }}"
         args=()
         for f in "${FILES[@]}"; do
