@@ -26,21 +26,26 @@ jobs:
       matrix:
         include:
           - name: gateway
-            context: ./services/gateway
+            context: .
+            dockerfile: ./services/gateway/Dockerfile
           - name: xtts
-            context: ./services/xtts
+            context: .
+            dockerfile: ./services/xtts/Dockerfile
           - name: xtts-glue
-            context: ./glue
+            context: .
+            dockerfile: ./glue/Dockerfile
           - name: tts-worker
-            context: ./services/tts-worker
+            context: .
+            dockerfile: ./services/tts-worker/Dockerfile
           - name: whisper-worker
-            context: ./services/whisper-worker
+            context: .
+            dockerfile: ./services/whisper-worker/Dockerfile
     name: ${{ matrix.name }}
     uses: smk762/gha-docker-shared-ci/.github/workflows/docker-release.yml@main
     with:
       image: ${{ vars.DOCKERHUB_ORG || secrets.DOCKERHUB_USERNAME || github.repository_owner }}/tss-stack-${{ matrix.name }}
       context: ${{ matrix.context }}
-      dockerfile: Dockerfile
+      dockerfile: ${{ matrix.dockerfile }}
       platforms: linux/amd64
       push_on_main: true
       push_on_tag: true
