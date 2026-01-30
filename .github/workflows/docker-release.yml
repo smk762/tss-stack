@@ -32,7 +32,7 @@ jobs:
           - name: whisper-worker
             context: ./services/whisper-worker
     name: ${{ matrix.name }}
-    uses: smk762/gha-docker-shared-ci/.github/workflows/docker-release.yml@v1
+    uses: smk762/gha-docker-shared-ci/.github/workflows/docker-release.yml@main
     with:
       image: ${{ vars.DOCKERHUB_ORG || secrets.DOCKERHUB_USERNAME || github.repository_owner }}/tss-stack-${{ matrix.name }}
       context: ${{ matrix.context }}
