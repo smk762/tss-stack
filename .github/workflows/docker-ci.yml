@@ -25,19 +25,19 @@ jobs:
         include:
           - name: gateway
             context: ./services/gateway
-            dockerfile: Dockerfile
+            dockerfile: ./services/gateway/Dockerfile
           - name: xtts
             context: ./services/xtts
-            dockerfile: Dockerfile
+            dockerfile: ./services/xtts/Dockerfile
           - name: xtts-glue
             context: ./glue
-            dockerfile: Dockerfile
+            dockerfile: ./glue/Dockerfile
           - name: tts-worker
             context: ./services/tts-worker
-            dockerfile: Dockerfile
+            dockerfile: ./services/tts-worker/Dockerfile
           - name: whisper-worker
             context: ./services/whisper-worker
-            dockerfile: Dockerfile
+            dockerfile: ./services/whisper-worker/Dockerfile
     name: ${{ matrix.name }}
     uses: smk762/gha-docker-shared-ci/.github/workflows/docker-ci.yml@main
     with:
