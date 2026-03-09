@@ -16,7 +16,7 @@ echo ""
 if [ ! -f "$AUDIO_FILE" ]; then
     echo "❌ Error: Audio file '$AUDIO_FILE' not found!"
     echo "Available test files:"
-    ls -la test-audio/ 2>/dev/null || echo "No test-audio directory found. Run: mkdir test-audio && cp voices/inara/*.wav test-audio/"
+    ls -la test-audio/ 2>/dev/null || echo "No test-audio directory found. Run: mkdir test-audio && cp voices/samples/inara/*.wav test-audio/"
     exit 1
 fi
 

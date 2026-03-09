@@ -2,6 +2,7 @@ FROM python:3.11-slim
 
 
 # Tools: ffmpeg (required), curl/jq (handy for inline debugging)
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg curl jq \
  && rm -rf /var/lib/apt/lists/*

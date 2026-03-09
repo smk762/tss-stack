@@ -1,0 +1,24 @@
+name: Compose Validate
+description: Validate docker-compose files
+inputs:
+  files:
+    description: Comma-separated list of compose files
+    required: false
+    default: docker-compose.yml
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      name: Validate compose config
+      run: |
+        set -euo pipefail
+        # Provide safe defaults so compose config can interpolate required vars during CI
+        export MINIO_ROOT_USER="${MINIO_ROOT_USER:-ci}"
+        export MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-ci-minio}"
+        IFS=',' read -ra FILES <<< "${{ inputs.files }}"
+        args=()
+        for f in "${FILES[@]}"; do
+          args+=("-f" "$f")
+        done
+        echo "docker compose ${args[*]} config"
+        docker compose "${args[@]}" config

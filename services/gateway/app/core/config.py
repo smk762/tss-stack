@@ -33,6 +33,10 @@ API_VERSION = "v1"
 DATA_DIR = env_str("DATA_DIR", "/data")
 RESULT_URL_TTL_SECONDS = env_int("RESULT_URL_TTL_SECONDS", 900)
 IDEMPOTENCY_TTL_SECONDS = env_int("IDEMPOTENCY_TTL_SECONDS", 60)
+PROVIDER_FETCH_TIMEOUT_SECONDS = env_float("PROVIDER_FETCH_TIMEOUT_SECONDS", 30.0)
+PROVIDER_WEBHOOK_TIMEOUT_SECONDS = env_float("PROVIDER_WEBHOOK_TIMEOUT_SECONDS", 10.0)
+PROVIDER_WEBHOOK_POLL_INTERVAL_SECONDS = env_float("PROVIDER_WEBHOOK_POLL_INTERVAL_SECONDS", 1.0)
+PROVIDER_WEBHOOK_MAX_WAIT_SECONDS = env_float("PROVIDER_WEBHOOK_MAX_WAIT_SECONDS", 300.0)
 
 # Redis queue
 REDIS_URL = env_str("REDIS_URL", "redis://redis:6379/0")
@@ -67,6 +71,11 @@ STT_SUPPORTED_MIME_TYPES = [
 ]
 
 # TTS
-TTS_OUTPUT_FORMATS = [s.strip() for s in env_str("TTS_OUTPUT_FORMATS", "wav,mp3,flac").split(",") if s.strip()]
+TTS_OUTPUT_FORMATS = [s.strip() for s in env_str("TTS_OUTPUT_FORMATS", "wav,mp3,ogg,flac").split(",") if s.strip()]
 STT_OUTPUT_FORMATS = [s.strip() for s in env_str("STT_OUTPUT_FORMATS", "json,text,srt,vtt").split(",") if s.strip()]
+
+# Voice presets
+VOICES_DIR = env_str("VOICES_DIR", "/voices/presets")
+DEFAULT_VOICE_ID = env_str("DEFAULT_VOICE_ID", "female")
+DEFAULT_VOICE_LANGUAGE = env_str("DEFAULT_VOICE_LANGUAGE", "en-US")
 

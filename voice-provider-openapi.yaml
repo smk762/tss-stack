@@ -1,0 +1,503 @@
+openapi: 3.1.0
+info:
+  title: FastAPI Prod Skeleton Async Voice Provider Contract
+  version: 0.2.0
+  description: |
+    Async-only external voice-provider contract expected by `fastapi-prod-skeleton`.
+
+    This contract is intended for the separate `tss-stack` repository to implement
+    as a stable gateway in front of XTTS and Whisper. The app should integrate with
+    voice jobs rather than blocking synchronous inference calls.
+
+    Metadata endpoints such as voice discovery stay synchronous. Inference endpoints
+    are async-only and should be suitable for queue-backed execution, polling, and
+    optional SSE/WS progress overlays.
+
+servers:
+  - url: http://localhost:9001
+    description: Example local gateway
+
+security:
+  - cfAccessJwt: []
+
+paths:
+  /voices:
+    get:
+      summary: List available voice presets
+      operationId: listVoices
+      responses:
+        "200":
+          description: Voice presets available for TTS
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoicePresetListResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /tts/jobs:
+    post:
+      summary: Queue a text-to-speech job
+      operationId: createTtsJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TTSJobCreateRequest"
+      responses:
+        "202":
+          description: TTS job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceJobAcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /tts/jobs/{job_id}:
+    get:
+      summary: Get TTS job status and result
+      operationId: getTtsJob
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: TTS job state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TTSJobStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /tts/jobs/{job_id}/events:
+    get:
+      summary: Stream TTS job events over SSE
+      operationId: streamTtsJobEvents
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Server-sent event stream for TTS job lifecycle updates
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                queued:
+                  summary: Example event stream
+                  value: |
+                    event: job.status
+                    data: {"id":"2a67d64c-9b77-43d4-b563-d7793cdd50aa","status":"queued","progress_pct":0}
+
+                    event: job.status
+                    data: {"id":"2a67d64c-9b77-43d4-b563-d7793cdd50aa","status":"processing","progress_pct":45}
+
+                    event: job.done
+                    data: {"id":"2a67d64c-9b77-43d4-b563-d7793cdd50aa","status":"completed","progress_pct":100}
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /stt/jobs:
+    post:
+      summary: Queue a speech-to-text job
+      operationId: createSttJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/STTJobCreateRequest"
+      responses:
+        "202":
+          description: STT job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceJobAcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /stt/jobs/{job_id}:
+    get:
+      summary: Get STT job status and result
+      operationId: getSttJob
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: STT job state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/STTJobStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /stt/jobs/{job_id}/events:
+    get:
+      summary: Stream STT job events over SSE
+      operationId: streamSttJobEvents
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Server-sent event stream for STT job lifecycle updates
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  securitySchemes:
+    cfAccessJwt:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: Cloudflare Access JWT presented by protected deployments.
+
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Request is invalid for the provider contract
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProviderError"
+    ValidationError:
+      description: Schema validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProviderError"
+    NotFound:
+      description: Job not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProviderError"
+    ServiceUnavailable:
+      description: Provider or engine unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProviderError"
+
+  schemas:
+    VoicePreset:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - language
+        - gender
+        - sample_url
+      properties:
+        id:
+          type: string
+          description: Stable application-facing voice identifier
+          examples: ["aria-en"]
+        name:
+          type: string
+          examples: ["Aria"]
+        language:
+          type: string
+          description: BCP-47 or provider-normalized locale
+          examples: ["en-US"]
+        gender:
+          type: string
+          examples: ["female"]
+        sample_url:
+          type: string
+          format: uri
+          description: Public or presigned sample clip URL
+
+    VoicePresetListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/VoicePreset"
+
+    VoiceJobAcceptedResponse:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing]
+        estimated_wait_seconds:
+          type: integer
+          minimum: 0
+        queue_position:
+          type: integer
+          minimum: 0
+        cost_gems:
+          type: integer
+          minimum: 0
+        event_stream_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Optional SSE endpoint for live lifecycle updates
+
+    VoiceJobBase:
+      type: object
+      required:
+        - id
+        - status
+        - progress_pct
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing, completed, failed, dead_letter, cancelled]
+        progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+        estimated_wait_seconds:
+          type: integer
+          minimum: 0
+        queue_position:
+          type: integer
+          minimum: 0
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    AudioPayload:
+      type: object
+      description: |
+        Final audio result. `url` is preferred. `base64` is allowed if the gateway
+        cannot directly publish audio to object storage yet.
+      properties:
+        url:
+          type: string
+          format: uri
+        base64:
+          type: string
+          description: Base64-encoded audio payload, optionally data-URL encoded
+        content_type:
+          type: string
+          examples: ["audio/mpeg"]
+
+    TTSJobCreateRequest:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        voice_id:
+          type: string
+          nullable: true
+          description: Stable app-facing voice preset ID
+        language:
+          type: string
+          nullable: true
+          examples: ["en-US"]
+        speed:
+          type: number
+          default: 1.0
+          minimum: 0.5
+          maximum: 2.0
+        format:
+          type: string
+          default: mp3
+          enum: [mp3, wav, ogg]
+        webhook_url:
+          type: string
+          format: uri
+          nullable: true
+        client_request_id:
+          type: string
+          nullable: true
+          description: Optional client correlation identifier for observability/idempotency
+
+    TTSJobResult:
+      type: object
+      required:
+        - audio
+        - duration_seconds
+        - format
+      properties:
+        audio:
+          $ref: "#/components/schemas/AudioPayload"
+        duration_seconds:
+          type: number
+        format:
+          type: string
+          enum: [mp3, wav, ogg]
+        voice_id:
+          type: string
+          nullable: true
+        language:
+          type: string
+          nullable: true
+        cost_gems:
+          type: integer
+          nullable: true
+
+    TTSJobStatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/VoiceJobBase"
+        - type: object
+          properties:
+            result:
+              $ref: "#/components/schemas/TTSJobResult"
+
+    STTJobCreateRequest:
+      type: object
+      properties:
+        audio_url:
+          type: string
+          format: uri
+          nullable: true
+        audio_base64:
+          type: string
+          nullable: true
+          description: Base64-encoded input audio, optionally data-URL encoded
+        language:
+          type: string
+          nullable: true
+          examples: ["en-US"]
+        webhook_url:
+          type: string
+          format: uri
+          nullable: true
+        client_request_id:
+          type: string
+          nullable: true
+          description: Optional client correlation identifier for observability/idempotency
+      anyOf:
+        - required: [audio_url]
+        - required: [audio_base64]
+
+    VoiceJobEvent:
+      type: object
+      required:
+        - id
+        - status
+        - progress_pct
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing, completed, failed, dead_letter, cancelled]
+        progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+        message:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+
+    STTJobResult:
+      type: object
+      required:
+        - text
+        - language_detected
+        - confidence
+        - duration_seconds
+      properties:
+        text:
+          type: string
+        language_detected:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        duration_seconds:
+          type: number
+        cost_gems:
+          type: integer
+          nullable: true
+
+    STTJobStatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/VoiceJobBase"
+        - type: object
+          properties:
+            result:
+              $ref: "#/components/schemas/STTJobResult"
+
+    ProviderError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              examples: [VALIDATION_ERROR, NOT_FOUND, SERVICE_UNAVAILABLE]
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true

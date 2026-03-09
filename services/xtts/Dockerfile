@@ -5,6 +5,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# hadolint ignore=DL3008
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential \
@@ -15,6 +16,7 @@ RUN apt-get update && \
       git && \
     rm -rf /var/lib/apt/lists/*
 
+# hadolint ignore=DL3013
 RUN pip install --no-cache-dir --upgrade pip 'setuptools<81' wheel && \
     pip install --no-cache-dir \
       transformers==4.37.2 \

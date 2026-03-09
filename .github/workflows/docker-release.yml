@@ -1,0 +1,50 @@
+name: docker-release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  docker_release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gateway
+            context: ./services/gateway
+            dockerfile: ./services/gateway/Dockerfile
+          - name: xtts
+            context: ./services/xtts
+            dockerfile: ./services/xtts/Dockerfile
+          - name: xtts-glue
+            context: ./glue
+            dockerfile: ./glue/Dockerfile
+          - name: tts-worker
+            context: ./services/tts-worker
+            dockerfile: ./services/tts-worker/Dockerfile
+          - name: whisper-worker
+            context: ./services/whisper-worker
+            dockerfile: ./services/whisper-worker/Dockerfile
+    name: ${{ matrix.name }}
+    uses: smk762/gha-docker-shared-ci/.github/workflows/docker-release.yml@main
+    with:
+      image: ${{ vars.DOCKERHUB_ORG || github.repository_owner }}/tss-stack-${{ matrix.name }}
+      context: ${{ matrix.context }}
+      dockerfile: ${{ matrix.dockerfile }}
+      platforms: linux/amd64
+      push_on_main: true
+      push_on_tag: true
+      sign_with_cosign: false
+      trivy_fail_severity: CRITICAL
+    secrets: inherit

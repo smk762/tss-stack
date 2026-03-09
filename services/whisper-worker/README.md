@@ -95,7 +95,7 @@ curl -X POST "http://localhost:9001/v1/stt/transcribe" \
 ./test-whisper.sh test-audio/sample.wav json
 ./test-whisper.sh test-audio/sample.wav srt
 ./test-whisper.sh test-audio/sample.wav text
-./test-whisper.sh voices/inara/any_voice_file.wav vtt
+./test-whisper.sh voices/samples/inara/any_voice_file.wav vtt
 ```
 
 ### Important Notes

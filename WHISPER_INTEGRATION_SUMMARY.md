@@ -68,7 +68,7 @@ curl -X POST "http://localhost:9001/v1/whisper/transcribe" \
 ```bash
 ./test-whisper.sh                                    # Default test
 ./test-whisper.sh test-audio/sample.wav srt         # SRT subtitles
-./test-whisper.sh voices/inara/voice_file.wav text   # Plain text
+./test-whisper.sh voices/samples/inara/voice_file.wav text   # Plain text
 ```
 
 ### Test Results ✅

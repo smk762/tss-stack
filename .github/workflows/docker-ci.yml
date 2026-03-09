@@ -1,0 +1,45 @@
+name: docker-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker_ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gateway
+            context: ./services/gateway
+            dockerfile: ./services/gateway/Dockerfile
+          - name: xtts
+            context: ./services/xtts
+            dockerfile: ./services/xtts/Dockerfile
+          - name: xtts-glue
+            context: ./glue
+            dockerfile: ./glue/Dockerfile
+          - name: tts-worker
+            context: ./services/tts-worker
+            dockerfile: ./services/tts-worker/Dockerfile
+          - name: whisper-worker
+            context: ./services/whisper-worker
+            dockerfile: ./services/whisper-worker/Dockerfile
+    name: ${{ matrix.name }}
+    uses: smk762/gha-docker-shared-ci/.github/workflows/docker-ci.yml@main
+    with:
+      image: ${{ vars.DOCKERHUB_ORG || github.repository_owner }}/tss-stack-${{ matrix.name }}
+      context: ${{ matrix.context }}
+      dockerfile: ${{ matrix.dockerfile }}
+      compose_files: docker-compose.yml
+      trivy_fail_severity: CRITICAL,HIGH
+    secrets: inherit

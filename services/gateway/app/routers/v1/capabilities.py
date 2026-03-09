@@ -21,7 +21,7 @@ async def get_capabilities():
         "tts": {
             "enabled": True,
             "output_formats": config.TTS_OUTPUT_FORMATS,
-            "voices": {"supports_list": False, "supports_custom_upload": False},
+            "voices": {"supports_list": True, "supports_custom_upload": False},
             "controls": {
                 "speed": {"min": 0.7, "max": 1.6, "default": 1.0, "step": 0.05, "enabled": True},
                 "pitch_semitones": {"min": -6.0, "max": 6.0, "default": 0.0, "step": 0.5, "enabled": True},

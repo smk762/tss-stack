@@ -13,6 +13,7 @@ from minio.error import S3Error
 SUPPORTED_TTS_FORMATS: Dict[str, str] = {
     "wav": "audio/wav",
     "mp3": "audio/mpeg",
+    "ogg": "audio/ogg",
     "flac": "audio/flac",
 }
 
@@ -47,7 +48,7 @@ MINIO_SECURE = env_str("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
 MINIO_BUCKET = env_str("MINIO_BUCKET", "artifacts")
 
 XTTS_URL = env_str("XTTS_URL", "http://xtts:8020/tts_to_file")
-VOICES_DIR = env_str("VOICES_DIR", "/voices")
+VOICES_DIR = env_str("VOICES_DIR", "/voices/presets")
 XTTS_OUTPUT_DIR = env_str("XTTS_OUTPUT_DIR", "/output")
 REQUEST_TIMEOUT = float(env_str("REQUEST_TIMEOUT", "60"))
 XTTS_STARTUP_GRACE_SECONDS = env_int("XTTS_STARTUP_GRACE_SECONDS", 120)
@@ -102,16 +103,28 @@ def mark_failed(job_id: str, code: str, message: str) -> None:
         conn.close()
 
 
+def set_progress(job_id: str, progress: float) -> None:
+    conn = db_connect()
+    try:
+        conn.execute(
+            "UPDATE jobs SET progress = ? WHERE id = ? AND status = 'running'",
+            (max(0.0, min(1.0, float(progress))), job_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def mark_succeeded(job_id: str, bucket: str, object_name: str, content_type: str, bytes_: int) -> None:
     conn = db_connect()
     try:
         conn.execute(
             """
             UPDATE jobs
-            SET status = ?, finished_at = ?, result_bucket = ?, result_object = ?, result_content_type = ?, result_bytes = ?
+            SET status = ?, finished_at = ?, progress = ?, result_bucket = ?, result_object = ?, result_content_type = ?, result_bytes = ?
             WHERE id = ? AND status != 'cancelled'
             """,
-            ("succeeded", now_iso(), bucket, object_name, content_type, bytes_, job_id),
+            ("succeeded", now_iso(), 1.0, bucket, object_name, content_type, bytes_, job_id),
         )
         conn.commit()
     finally:
@@ -185,6 +198,8 @@ def finalize_audio(input_wav: str, fmt: str, sample_rate_hz: Optional[int]) -> T
         cmd += ["-acodec", "pcm_s16le", target_path]
     elif fmt == "mp3":
         cmd += ["-acodec", "libmp3lame", target_path]
+    elif fmt == "ogg":
+        cmd += ["-acodec", "libvorbis", target_path]
     elif fmt == "flac":
         cmd += ["-acodec", "flac", target_path]
     else:
@@ -744,6 +759,7 @@ def main() -> None:
             continue
 
         mark_running(job_id)
+        set_progress(job_id, 0.08)
         params: Dict[str, Any] = msg.get("params") or {}
         # Make preprocessing randomness deterministic per job unless caller provided a seed.
         try:
@@ -756,6 +772,7 @@ def main() -> None:
         controls = _read_controls(params)
         original_text = params.get("text") or ""
         text = preprocess_text(original_text, controls)
+        set_progress(job_id, 0.15)
         if DEBUG_PREPROCESS_TEXT:
             o = re.sub(r"\s+", " ", str(original_text)).strip()
             p = re.sub(r"\s+", " ", str(text)).strip()
@@ -781,6 +798,7 @@ def main() -> None:
         if not os.path.isfile(voice_path):
             mark_failed(job_id, "invalid_request", f"Voice not found: {voice_id}")
             continue
+        set_progress(job_id, 0.22)
 
         # IMPORTANT: XTTS writes the output file on the XTTS container filesystem.
         # Therefore, we must request an output path that exists in BOTH containers via a shared volume.
@@ -847,6 +865,7 @@ def main() -> None:
         if last_err is not None:
             mark_failed(job_id, "engine_error", f"XTTS failed: {last_err}")
             continue
+        set_progress(job_id, 0.62)
 
         if not os.path.isfile(out_wav):
             mark_failed(job_id, "engine_error", f"XTTS reported success but output file missing: {out_wav}")
@@ -858,16 +877,28 @@ def main() -> None:
         except Exception as e:
             # DSP is optional; fall back to raw XTTS output.
             print(f"[tts-worker] DSP failed for {job_id}: {e}")
+        set_progress(job_id, 0.78)
 
         try:
             final_path, final_size, content_type = finalize_audio(out_wav, fmt, sample_rate_hz)
+        except subprocess.CalledProcessError as e:
+            mark_failed(job_id, "ffmpeg_error", f"Failed to finalize audio with ffmpeg: {e}")
+            continue
+        except (OSError, IOError) as e:
+            mark_failed(job_id, "io_error", f"Failed to finalize audio due to filesystem error: {e}")
+            continue
+        except ValueError as e:
+            mark_failed(job_id, "invalid_output", f"Failed to finalize audio due to invalid output settings: {e}")
+            continue
         except Exception as e:
             mark_failed(job_id, "processing_error", f"Failed to finalize audio: {e}")
             continue
+        set_progress(job_id, 0.9)
 
         object_name = f"outputs/{job_id}/audio.{fmt}"
         with open(final_path, "rb") as f:
             m.put_object(MINIO_BUCKET, object_name, f, length=final_size, content_type=content_type)
+        set_progress(job_id, 0.97)
         mark_succeeded(job_id, MINIO_BUCKET, object_name, content_type, final_size)
         print(f"[tts-worker] succeeded {job_id} -> {MINIO_BUCKET}/{object_name}")
 
