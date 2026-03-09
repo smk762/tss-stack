@@ -34,6 +34,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/CapabilitiesResponse"
 
+  /v1/voices:
+    get:
+      tags: [tts]
+      summary: List available voice presets
+      operationId: listVoicesV1
+      responses:
+        "200":
+          description: Voice presets available for TTS.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoicePresetListResponse"
+
   /v1/stt/transcribe:
     post:
       tags: [stt]
@@ -387,7 +403,34 @@ components:
       enum: [json, text, srt, vtt]
     TtsOutputFormat:
       type: string
-      enum: [wav, mp3, flac]
+      enum: [wav, mp3, ogg, flac]
+
+    VoicePreset:
+      type: object
+      additionalProperties: false
+      required: [id, name, language, gender, sample_url]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        language:
+          type: string
+        gender:
+          type: string
+        sample_url:
+          type: string
+          format: uri
+
+    VoicePresetListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoicePreset"
 
     SttTranscribeParams:
       type: object

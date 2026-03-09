@@ -31,7 +31,7 @@ uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 ### Common endpoints
 
 - **Health**: `GET /health`
-- **Voices**: `GET /voices` (lists `*.wav` under `VOICES_DIR`, typically mounted from `./voices`)
+- **Voices**: `GET /voices` (lists `*.wav` under `VOICES_DIR`, typically mounted from `./voices/presets`)
 - **Synthesize to file**: `POST /tts_to_file` (writes into `XTTS_OUTPUT_DIR`, typically mounted from `xtts_output`)
 - **Snapcast (optional)**:
   - `GET /snapcast/status` — raw Snapserver status (streams, groups, clients)

@@ -18,7 +18,7 @@ app = FastAPI(title="Voice Glue")
 
 # ---------- Config ----------
 XTTS_URL = os.getenv("XTTS_URL", "http://xtts:8020/tts_to_file")
-VOICES_DIR = os.getenv("VOICES_DIR", "/voices")
+VOICES_DIR = os.getenv("VOICES_DIR", "/voices/presets")
 OUTPUT_DIR = os.getenv("XTTS_OUTPUT_DIR", "/output")
 XTTS_LANG = os.getenv("XTTS_LANG", "en")
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30"))
@@ -48,7 +48,7 @@ class AnnounceRequest(BaseModel):
 
 
 def _resolve_voice_path(speaker: str) -> str:
-    # allow "name" -> /voices/name.wav, or explicit "name.wav"
+    # allow "name" -> VOICES_DIR/name.wav, or explicit "name.wav"
     if speaker.endswith(".wav"):
         p = Path(speaker)
         return str(p) if p.is_absolute() else str(Path(VOICES_DIR) / speaker)

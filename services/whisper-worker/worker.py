@@ -99,16 +99,28 @@ def mark_failed(job_id: str, code: str, message: str) -> None:
         conn.close()
 
 
+def set_progress(job_id: str, progress: float) -> None:
+    conn = db_connect()
+    try:
+        conn.execute(
+            "UPDATE jobs SET progress = ? WHERE id = ? AND status = 'running'",
+            (max(0.0, min(1.0, float(progress))), job_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def mark_succeeded(job_id: str, bucket: str, object_name: str, content_type: str, bytes_: int) -> None:
     conn = db_connect()
     try:
         conn.execute(
             """
             UPDATE jobs
-            SET status = ?, finished_at = ?, result_bucket = ?, result_object = ?, result_content_type = ?, result_bytes = ?
+            SET status = ?, finished_at = ?, progress = ?, result_bucket = ?, result_object = ?, result_content_type = ?, result_bytes = ?
             WHERE id = ? AND status != 'cancelled'
             """,
-            ("succeeded", now_iso(), bucket, object_name, content_type, bytes_, job_id),
+            ("succeeded", now_iso(), 1.0, bucket, object_name, content_type, bytes_, job_id),
         )
         conn.commit()
     finally:
@@ -247,6 +259,7 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
     """
     try:
         print(f"[whisper-worker] Processing job {job_id}, msg: {msg}")
+        set_progress(job_id, 0.1)
         input_info = msg.get("input", {})
         params = msg.get("params", {})
         
@@ -265,6 +278,7 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
             try:
                 minio_client.fget_object(input_bucket, input_object, temp_file.name)
                 print(f"[whisper-worker] Downloaded to {temp_file.name}")
+                set_progress(job_id, 0.3)
                 
                 # Transcribe with Whisper
                 print(f"[whisper-worker] Transcribing {input_object} for job {job_id}")
@@ -276,6 +290,7 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
                     import traceback
                     traceback.print_exc()
                     raise
+                set_progress(job_id, 0.72)
 
                 # Guard against empty transcription responses (avoid silent 0-byte results).
                 text_val = str(whisper_result.get("text", "")).strip()
@@ -284,6 +299,7 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
 
                 # Convert to requested format
                 content, content_type = convert_whisper_output(whisper_result, output_format)
+                set_progress(job_id, 0.84)
                 
                 # Upload result to MinIO
                 output_object = f"results/{job_id}/transcription.{output_format}"
@@ -297,6 +313,7 @@ def process_job(job_id: str, msg: Dict[str, Any], minio_client: Minio) -> None:
                     length=len(content_bytes),
                     content_type=content_type
                 )
+                set_progress(job_id, 0.97)
                 
                 # Mark job as succeeded
                 mark_succeeded(job_id, MINIO_BUCKET, output_object, content_type, len(content_bytes))

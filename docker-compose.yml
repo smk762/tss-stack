@@ -28,6 +28,7 @@ services:
       - DATA_DIR=/data
       - JOBS_DB_PATH=/data/jobs.db
       - REDIS_URL=redis://redis:6379/0
+      - VOICES_DIR=/voices/presets
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
@@ -40,6 +41,7 @@ services:
       - STT_MAX_BYTES=${STT_MAX_BYTES:-52428800}
     volumes:
       - jobs_data:/data
+      - ./voices:/voices:ro
     ports:
       - "9001:9001"
     depends_on:
@@ -61,7 +63,7 @@ services:
       - MINIO_SECURE=false
       - MINIO_BUCKET=${MINIO_BUCKET:-artifacts}
       - XTTS_URL=http://xtts:8020/tts_to_file
-      - VOICES_DIR=/voices
+      - VOICES_DIR=/voices/presets
       - XTTS_OUTPUT_DIR=/output
     volumes:
       - jobs_data:/data
@@ -100,7 +102,7 @@ services:
     restart: unless-stopped
     environment:
       - XTTS_URL=http://xtts:8020/tts_to_file
-      - VOICES_DIR=/voices
+      - VOICES_DIR=/voices/presets
       - XTTS_LANG=en
       - XTTS_OUTPUT_DIR=/output
       - PYTHONDONTWRITEBYTECODE=1

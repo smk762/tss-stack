@@ -5,7 +5,8 @@ Local-first stack for voice + retrieval, with **engine-agnostic contracts** so y
 ## Services (today)
 
 - **`gateway`**: FastAPI contract service (job-based) on `:9001`
-  - `/v1/stt/*`, `/v1/tts/*`, `/v1/jobs/*`, `/v1/capabilities`
+  - Internal async API: `/v1/stt/*`, `/v1/tts/*`, `/v1/jobs/*`, `/v1/capabilities`, `/v1/voices`
+  - External async provider API: `/voices`, `/tts/jobs`, `/stt/jobs`
 - **`redis`**: job queue
 - **`minio`**: artifact storage (S3-compatible) + presigned `result_url`s
 - **`stt-worker`**: scaffolded worker (no engine wired yet)
@@ -27,6 +28,8 @@ docker compose up -d --build
 - MinIO S3 API: `http://localhost:9010`
 - MinIO console: `http://localhost:9011`
 - Gateway Dev UI (TTS + STT upload/mic): `http://localhost:9001/ui` (mic capture requires HTTPS or localhost)
+- Provider contract surface: `http://localhost:9001/voices`, `http://localhost:9001/tts/jobs`, `http://localhost:9001/stt/jobs`
+- Provider voice presets come from `./voices/presets/*.wav`; reference clips live under `./voices/samples/`
 
 Required secrets (no insecure defaults):
 
@@ -81,6 +84,7 @@ Snapcast ports (host):
 The key trick is to keep **stable HTTP contracts** at the edges, and swap engines behind them:
 
 - **UI ↔ gateway**: stable `/v1/*` API (OpenAPI in `contracts/openapi.v1.yaml`)
+- **External app ↔ gateway**: async provider API aligned with `voice-provider-openapi.yaml`
 - **gateway ↔ workers**: stable job payloads over Redis + stable artifact format in MinIO
 
 So “scaling up” is mostly:

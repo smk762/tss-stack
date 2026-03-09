@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 
+from app.routers import provider
 from app.routers.v1 import capabilities, jobs, stt, tts, whisper
 from app.db.job_store import JobStore
 from app.storage.minio_store import MinioStore
@@ -11,6 +12,7 @@ from app.storage.minio_store import MinioStore
 
 app = FastAPI(title="TSS Gateway", version="v1")
 
+app.include_router(provider.router)
 app.include_router(capabilities.router, prefix="/v1")
 app.include_router(stt.router, prefix="/v1")
 app.include_router(tts.router, prefix="/v1")
