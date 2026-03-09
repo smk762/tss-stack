@@ -881,6 +881,15 @@ def main() -> None:
 
         try:
             final_path, final_size, content_type = finalize_audio(out_wav, fmt, sample_rate_hz)
+        except subprocess.CalledProcessError as e:
+            mark_failed(job_id, "ffmpeg_error", f"Failed to finalize audio with ffmpeg: {e}")
+            continue
+        except (OSError, IOError) as e:
+            mark_failed(job_id, "io_error", f"Failed to finalize audio due to filesystem error: {e}")
+            continue
+        except ValueError as e:
+            mark_failed(job_id, "invalid_output", f"Failed to finalize audio due to invalid output settings: {e}")
+            continue
         except Exception as e:
             mark_failed(job_id, "processing_error", f"Failed to finalize audio: {e}")
             continue

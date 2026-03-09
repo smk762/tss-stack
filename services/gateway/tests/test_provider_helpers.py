@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import base64
 
+import pytest
+from fastapi import HTTPException
+
 from app.db.job_store import JobRow
 from app.media import safe_voice_path
 from app.routers import provider
@@ -80,3 +83,24 @@ def test_estimate_stt_confidence_penalizes_short_mismatched_audio() -> None:
     )
 
     assert strong > weak
+
+
+@pytest.mark.anyio
+async def test_resolve_stt_input_rejects_invalid_local_minio_path() -> None:
+    body = provider.STTJobCreateRequest(audio_url="http://localhost:9010/only-bucket")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await provider._resolve_stt_input(body)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.anyio
+async def test_wait_for_terminal_job_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provider.config, "PROVIDER_WEBHOOK_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(provider.config, "PROVIDER_WEBHOOK_MAX_WAIT_SECONDS", 0.02)
+    monkeypatch.setattr(provider, "_require_job", lambda job_id, expected_type: make_row(status="queued"))
+
+    with pytest.raises(TimeoutError):
+        await provider._wait_for_terminal_job("job-123", "tts.synthesize")

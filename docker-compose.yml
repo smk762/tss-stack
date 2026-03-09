@@ -123,6 +123,7 @@ services:
 
   snapserver:
     image: firefrei/snapcast:latest
+    container_name: snapserver
     restart: unless-stopped
     profiles: ["snapcast"]
     volumes:

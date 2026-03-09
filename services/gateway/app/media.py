@@ -9,6 +9,11 @@ from typing import Optional
 
 
 def guess_mime_type(path_or_name: Optional[str], fallback: Optional[str] = None) -> Optional[str]:
+    """Return a lowercased MIME type without parameters.
+
+    When ``fallback`` is provided it takes precedence over filename guessing so
+    callers can preserve an explicit upstream content type.
+    """
     if fallback:
         return fallback.split(";", 1)[0].strip().lower()
     if not path_or_name:

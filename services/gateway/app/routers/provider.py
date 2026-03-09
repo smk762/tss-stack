@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -25,6 +27,7 @@ from app.storage.minio_store import MinioStore
 
 router = APIRouter(tags=["provider"])
 _webhook_tasks: set[asyncio.Task[Any]] = set()
+logger = logging.getLogger(__name__)
 
 
 class VoicePreset(BaseModel):
@@ -327,8 +330,12 @@ async def _resolve_stt_input(body: STTJobCreateRequest) -> tuple[bytes, str, flo
                 except Exception as exc:
                     raise provider_error(400, "VALIDATION_ERROR", "Failed to fetch local audio_url.", {"audio_url": body.audio_url, "reason": str(exc)}) from exc
             else:
-                audio_bytes = b""
-                mime_hint = None
+                raise provider_error(
+                    400,
+                    "VALIDATION_ERROR",
+                    "Invalid local MinIO audio_url path.",
+                    {"audio_url": body.audio_url},
+                )
         else:
             try:
                 async with httpx.AsyncClient(timeout=config.PROVIDER_FETCH_TIMEOUT_SECONDS, follow_redirects=True) as client:
@@ -414,10 +421,17 @@ async def _stream_job_events(
 
 
 async def _wait_for_terminal_job(job_id: str, expected_type: str) -> JobRow:
+    started_at = time.monotonic()
+    max_wait_seconds = max(
+        float(config.PROVIDER_WEBHOOK_POLL_INTERVAL_SECONDS),
+        float(config.PROVIDER_WEBHOOK_MAX_WAIT_SECONDS),
+    )
     while True:
         row = _require_job(job_id, expected_type)
         if row.status in {"succeeded", "failed", "cancelled"}:
             return row
+        if time.monotonic() - started_at >= max_wait_seconds:
+            raise TimeoutError(f"Timed out waiting for provider job {job_id} to finish.")
         await asyncio.sleep(config.PROVIDER_WEBHOOK_POLL_INTERVAL_SECONDS)
 
 
@@ -511,8 +525,8 @@ async def _notify_tts_webhook(job_id: str, webhook_url: str) -> None:
         row = await _wait_for_terminal_job(job_id, "tts.synthesize")
         payload = _build_tts_job_response(row).model_dump(exclude_none=True)
         await _post_webhook(webhook_url, payload)
-    except Exception as exc:
-        print(f"[provider] webhook delivery failed for tts job {job_id}: {exc}")
+    except Exception:
+        logger.exception("Provider webhook delivery failed for TTS job %s to %s", job_id, webhook_url)
 
 
 async def _notify_stt_webhook(job_id: str, webhook_url: str) -> None:
@@ -520,8 +534,8 @@ async def _notify_stt_webhook(job_id: str, webhook_url: str) -> None:
         row = await _wait_for_terminal_job(job_id, "stt.transcribe")
         payload = _build_stt_job_response(row).model_dump(exclude_none=True)
         await _post_webhook(webhook_url, payload)
-    except Exception as exc:
-        print(f"[provider] webhook delivery failed for stt job {job_id}: {exc}")
+    except Exception:
+        logger.exception("Provider webhook delivery failed for STT job %s to %s", job_id, webhook_url)
 
 
 @router.get("/voices", response_model=VoicePresetListResponse)

@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+import errno
 import subprocess
 import asyncio
 from pathlib import Path
@@ -40,11 +41,8 @@ class TtsToFileRequest(BaseModel):
     language: str = Field(default=XTTS_LANG)
     timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
 
-class AnnounceRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=20_000)
-    speaker: str = Field(default=DEFAULT_SPEAKER)
-    language: str = Field(default=XTTS_LANG)
-    timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+class AnnounceRequest(TtsToFileRequest):
+    pass
 
 
 def _resolve_voice_path(speaker: str) -> str:
@@ -89,7 +87,7 @@ async def _snapcast_rpc(method: str, params: Optional[Dict[str, Any]] = None, ti
         raise HTTPException(
             status_code=502,
             detail={"error": "snapcast rpc failed", "method": method, "rpc_endpoint": SNAPCAST_RPC, "detail": str(e)},
-        )
+        ) from e
     if not isinstance(data, dict):
         raise HTTPException(status_code=502, detail={"error": "unexpected snapcast response", "method": method})
     if data.get("error"):
@@ -229,8 +227,8 @@ async def tts_to_file(body: TtsToFileRequest) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail={"error": "voice must be under VOICES_DIR", "speaker": body.speaker})
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=400, detail={"error": "invalid voice path", "speaker": body.speaker})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error": "invalid voice path", "speaker": body.speaker}) from e
 
     if not Path(voice_path).is_file():
         raise HTTPException(
@@ -255,7 +253,7 @@ async def tts_to_file(body: TtsToFileRequest) -> Dict[str, Any]:
             r = await cli.post(XTTS_URL, json=payload)
             r.raise_for_status()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"TTS failed: {e}")
+        raise HTTPException(status_code=502, detail=f"TTS failed: {e}") from e
 
     if not Path(out_path).is_file():
         raise HTTPException(status_code=502, detail={"error": "TTS reported success but output file missing", "out_path": out_path})
@@ -294,12 +292,17 @@ def _stream_wav_to_snapcast_fifo(wav_path: str) -> None:
         "-",
     ]
     try:
-        with open(SNAPCAST_FIFO, "wb") as fifo:
+        fd = os.open(SNAPCAST_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "wb") as fifo:
             subprocess.run(cmd, check=True, stdout=fifo)
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail=f"ffmpeg not found: {FFMPEG_BIN}")
+    except OSError as e:
+        if e.errno == errno.ENXIO:
+            raise HTTPException(status_code=503, detail="Snapcast FIFO has no reader; snapserver likely stopped") from e
+        raise
     except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"ffmpeg failed: {e}")
+        raise HTTPException(status_code=500, detail=f"ffmpeg failed: {e}") from e
 
 @app.post("/announce")
 async def announce(body: AnnounceRequest) -> Dict[str, Any]:
@@ -307,6 +310,9 @@ async def announce(body: AnnounceRequest) -> Dict[str, Any]:
     Optional side-effect endpoint: synthesize speech and stream it into Snapcast's FIFO.
     Disabled by default; enable with SNAPCAST_ENABLED=1 and the snapcast Compose profile.
     """
+    if not SNAPCAST_ENABLED:
+        raise HTTPException(status_code=409, detail="Snapcast is disabled (set SNAPCAST_ENABLED=1 and enable the snapcast compose profile).")
+
     # Reuse the same XTTS payload format as /tts_to_file.
     voice_path = _resolve_voice_path(body.speaker)
     if not Path(voice_path).is_file():
@@ -328,7 +334,7 @@ async def announce(body: AnnounceRequest) -> Dict[str, Any]:
             r = await cli.post(XTTS_URL, json=payload)
             r.raise_for_status()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"TTS failed: {e}")
+        raise HTTPException(status_code=502, detail=f"TTS failed: {e}") from e
 
     if not Path(out_path).is_file():
         raise HTTPException(status_code=502, detail={"error": "TTS reported success but output file missing", "out_path": out_path})

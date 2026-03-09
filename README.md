@@ -9,7 +9,7 @@ Local-first stack for voice + retrieval, with **engine-agnostic contracts** so y
   - External async provider API: `/voices`, `/tts/jobs`, `/tts/jobs/{job_id}`, `/tts/jobs/{job_id}/events`, `/stt/jobs`, `/stt/jobs/{job_id}`, `/stt/jobs/{job_id}/events`
 - **`redis`**: job queue
 - **`minio`**: artifact storage (S3-compatible) + presigned `result_url`s
-- **`stt-worker`**: scaffolded worker (no engine wired yet)
+- **`whisper-worker`**: Whisper/STT job worker (transcribes queued jobs and writes artifacts to MinIO)
 - **`tts-worker`**: XTTS job worker (calls `xtts` HTTP API, writes audio to MinIO)
 - **`xtts`**: XTTS engine server (defaults to CPU unless you opt into GPU)
 - **`xtts-glue`**: Voice Glue API (no playback side-effects)
