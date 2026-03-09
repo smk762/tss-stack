@@ -5,6 +5,7 @@ import base64
 import json
 import re
 import uuid
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 from urllib.parse import unquote, urlparse
@@ -12,6 +13,7 @@ from urllib.parse import unquote, urlparse
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from app.core import config
@@ -43,6 +45,7 @@ class VoiceJobAcceptedResponse(BaseModel):
     estimated_wait_seconds: Optional[int] = None
     queue_position: Optional[int] = None
     cost_gems: Optional[int] = None
+    event_stream_url: Optional[str] = None
 
 
 class AudioPayload(BaseModel):
@@ -58,6 +61,7 @@ class TTSJobCreateRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     format: Literal["mp3", "wav", "ogg"] = "mp3"
     webhook_url: Optional[str] = None
+    client_request_id: Optional[str] = None
 
 
 class TTSJobResult(BaseModel):
@@ -71,11 +75,14 @@ class TTSJobResult(BaseModel):
 
 class TTSJobStatusResponse(BaseModel):
     id: str
-    status: Literal["queued", "processing", "completed", "failed", "dead_letter"]
+    status: Literal["queued", "processing", "completed", "failed", "dead_letter", "cancelled"]
     progress_pct: int
     estimated_wait_seconds: Optional[int] = None
     queue_position: Optional[int] = None
     error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
     result: Optional[TTSJobResult] = None
 
 
@@ -84,6 +91,7 @@ class STTJobCreateRequest(BaseModel):
     audio_base64: Optional[str] = None
     language: Optional[str] = None
     webhook_url: Optional[str] = None
+    client_request_id: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_audio_source(self) -> "STTJobCreateRequest":
@@ -102,12 +110,23 @@ class STTJobResult(BaseModel):
 
 class STTJobStatusResponse(BaseModel):
     id: str
-    status: Literal["queued", "processing", "completed", "failed", "dead_letter"]
+    status: Literal["queued", "processing", "completed", "failed", "dead_letter", "cancelled"]
     progress_pct: int
     estimated_wait_seconds: Optional[int] = None
     queue_position: Optional[int] = None
     error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
     result: Optional[STTJobResult] = None
+
+
+class VoiceJobEvent(BaseModel):
+    id: str
+    status: Literal["queued", "processing", "completed", "failed", "dead_letter", "cancelled"]
+    progress_pct: int
+    message: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 def provider_error(status_code: int, code: str, message: str, details: Optional[Dict[str, Any]] = None) -> HTTPException:
@@ -127,13 +146,13 @@ def _voice_name(voice_id: str) -> str:
     return voice_id.replace("_", " ").replace("-", " ").strip().title() or voice_id
 
 
-def _provider_status(status: str) -> Literal["queued", "processing", "completed", "failed", "dead_letter"]:
+def _provider_status(status: str) -> Literal["queued", "processing", "completed", "failed", "dead_letter", "cancelled"]:
     mapped = {
         "queued": "queued",
         "running": "processing",
         "succeeded": "completed",
         "failed": "failed",
-        "cancelled": "failed",
+        "cancelled": "cancelled",
     }.get(status)
     return mapped or "dead_letter"
 
@@ -163,6 +182,62 @@ def _provider_progress_pct(row: JobRow) -> int:
 def _parse_params(row: JobRow) -> Dict[str, Any]:
     if not row.params_json:
         return {}
+    try:
+        data = json.loads(row.params_json)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _job_timestamps(row: JobRow) -> Dict[str, Optional[str]]:
+    return {
+        "created_at": row.created_at,
+        "started_at": row.started_at,
+        "completed_at": row.finished_at,
+    }
+
+
+def _job_event_stream_url(request: Request, route_name: str, job_id: str) -> str:
+    return str(request.url_for(route_name, job_id=job_id))
+
+
+def _job_event_name(status: Literal["queued", "processing", "completed", "failed", "dead_letter", "cancelled"]) -> str:
+    if status == "completed":
+        return "job.done"
+    if status in {"failed", "dead_letter", "cancelled"}:
+        return "job.error"
+    return "job.status"
+
+
+def _job_event_message(status: Literal["queued", "processing", "completed", "failed", "dead_letter", "cancelled"]) -> Optional[str]:
+    if status == "queued":
+        return "Job queued."
+    if status == "processing":
+        return "Job processing."
+    if status == "completed":
+        return "Job completed."
+    if status == "cancelled":
+        return "Job cancelled."
+    if status == "dead_letter":
+        return "Job moved to dead letter state."
+    return None
+
+
+def _build_job_event(row: JobRow) -> VoiceJobEvent:
+    status = _provider_status(row.status)
+    error_message = row.error_message or ("Job cancelled." if status == "cancelled" else None)
+    return VoiceJobEvent(
+        id=row.id,
+        status=status,
+        progress_pct=_provider_progress_pct(row),
+        message=_job_event_message(status),
+        error_message=error_message,
+    )
+
+
+def _encode_sse(event: str, data: Dict[str, Any]) -> bytes:
+    payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
     try:
         data = json.loads(row.params_json)
         return data if isinstance(data, dict) else {}
@@ -294,6 +369,50 @@ def _load_tts_duration_seconds(row: JobRow) -> float:
     return probe_duration_seconds(payload, suffix=suffix_for_mime(row.result_content_type)) or 0.0
 
 
+async def _stream_job_events(
+    request: Request,
+    job_id: str,
+    expected_type: str,
+    response_builder: Callable[[JobRow], BaseModel],
+) -> AsyncIterator[bytes]:
+    poll_interval = max(0.1, float(config.PROVIDER_WEBHOOK_POLL_INTERVAL_SECONDS))
+    keepalive_seconds = max(15.0, poll_interval * 5)
+    last_payload: Optional[str] = None
+    last_emit = asyncio.get_running_loop().time()
+
+    while True:
+        if await request.is_disconnected():
+            break
+
+        row = _require_job(job_id, expected_type)
+        event = _build_job_event(row)
+        payload = event.model_dump(exclude_none=True)
+        payload_signature = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        now = asyncio.get_running_loop().time()
+
+        if payload_signature != last_payload:
+            yield _encode_sse(_job_event_name(event.status), payload)
+            last_payload = payload_signature
+            last_emit = now
+            if row.status in {"succeeded", "failed", "cancelled"}:
+                break
+        elif now - last_emit >= keepalive_seconds:
+            current = response_builder(row).model_dump(exclude_none=True)
+            keepalive_id = json.dumps(
+                {
+                    "id": current["id"],
+                    "status": current["status"],
+                    "progress_pct": current["progress_pct"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            yield f": keep-alive {keepalive_id}\n\n".encode("utf-8")
+            last_emit = now
+
+        await asyncio.sleep(poll_interval)
+
+
 async def _wait_for_terminal_job(job_id: str, expected_type: str) -> JobRow:
     while True:
         row = _require_job(job_id, expected_type)
@@ -340,6 +459,7 @@ def _build_tts_job_response(row: JobRow) -> TTSJobStatusResponse:
         status=_provider_status(row.status),
         progress_pct=_provider_progress_pct(row),
         error_message=error_message,
+        **_job_timestamps(row),
         result=result,
     )
 
@@ -375,6 +495,7 @@ def _build_stt_job_response(row: JobRow) -> STTJobStatusResponse:
         status=_provider_status(row.status),
         progress_pct=_provider_progress_pct(row),
         error_message=error_message,
+        **_job_timestamps(row),
         result=result,
     )
 
@@ -434,7 +555,7 @@ async def voice_sample(voice_id: str) -> FileResponse:
 
 
 @router.post("/tts/jobs", response_model=VoiceJobAcceptedResponse, status_code=202)
-async def create_tts_job(body: TTSJobCreateRequest) -> VoiceJobAcceptedResponse:
+async def create_tts_job(body: TTSJobCreateRequest, request: Request) -> VoiceJobAcceptedResponse:
     voice_id = body.voice_id or config.DEFAULT_VOICE_ID
     if not voice_id:
         raise provider_error(400, "VALIDATION_ERROR", "voice_id is required when no default voice is configured.")
@@ -457,6 +578,7 @@ async def create_tts_job(body: TTSJobCreateRequest) -> VoiceJobAcceptedResponse:
         "output_format": body.format,
         "controls": {"speed": body.speed},
         "provider_webhook_url": body.webhook_url,
+        "client_request_id": body.client_request_id,
     }
 
     store = JobStore()
@@ -473,7 +595,11 @@ async def create_tts_job(body: TTSJobCreateRequest) -> VoiceJobAcceptedResponse:
     )
     if body.webhook_url:
         _track_background_task(asyncio.create_task(_notify_tts_webhook(job_id, body.webhook_url)))
-    return VoiceJobAcceptedResponse(id=job_id, status="queued")
+    return VoiceJobAcceptedResponse(
+        id=job_id,
+        status="queued",
+        event_stream_url=_job_event_stream_url(request, "tts_job_events", job_id),
+    )
 
 
 @router.get("/tts/jobs/{job_id}", response_model=TTSJobStatusResponse)
@@ -482,8 +608,22 @@ async def get_tts_job(job_id: str) -> TTSJobStatusResponse:
     return _build_tts_job_response(row)
 
 
+@router.get("/tts/jobs/{job_id}/events", name="tts_job_events")
+async def stream_tts_job_events(job_id: str, request: Request) -> StreamingResponse:
+    _require_job(job_id, "tts.synthesize")
+    return StreamingResponse(
+        _stream_job_events(request, job_id, "tts.synthesize", _build_tts_job_response),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/stt/jobs", response_model=VoiceJobAcceptedResponse, status_code=202)
-async def create_stt_job(body: STTJobCreateRequest) -> VoiceJobAcceptedResponse:
+async def create_stt_job(body: STTJobCreateRequest, request: Request) -> VoiceJobAcceptedResponse:
     audio_bytes, mime, duration_seconds = await _resolve_stt_input(body)
     engine_language = _normalize_language_for_engine(body.language)
 
@@ -502,6 +642,7 @@ async def create_stt_job(body: STTJobCreateRequest) -> VoiceJobAcceptedResponse:
         "output_format": "json",
         "provider_webhook_url": body.webhook_url,
         "provider_input_duration_seconds": duration_seconds,
+        "client_request_id": body.client_request_id,
     }
     store.create_job(job_id, "stt.transcribe", owner_id=None, params=params)
     await RedisQueue().enqueue(
@@ -523,10 +664,28 @@ async def create_stt_job(body: STTJobCreateRequest) -> VoiceJobAcceptedResponse:
     )
     if body.webhook_url:
         _track_background_task(asyncio.create_task(_notify_stt_webhook(job_id, body.webhook_url)))
-    return VoiceJobAcceptedResponse(id=job_id, status="queued")
+    return VoiceJobAcceptedResponse(
+        id=job_id,
+        status="queued",
+        event_stream_url=_job_event_stream_url(request, "stt_job_events", job_id),
+    )
 
 
 @router.get("/stt/jobs/{job_id}", response_model=STTJobStatusResponse)
 async def get_stt_job(job_id: str) -> STTJobStatusResponse:
     row = _require_job(job_id, "stt.transcribe")
     return _build_stt_job_response(row)
+
+
+@router.get("/stt/jobs/{job_id}/events", name="stt_job_events")
+async def stream_stt_job_events(job_id: str, request: Request) -> StreamingResponse:
+    _require_job(job_id, "stt.transcribe")
+    return StreamingResponse(
+        _stream_job_events(request, job_id, "stt.transcribe", _build_stt_job_response),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

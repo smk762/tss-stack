@@ -6,7 +6,7 @@ Local-first stack for voice + retrieval, with **engine-agnostic contracts** so y
 
 - **`gateway`**: FastAPI contract service (job-based) on `:9001`
   - Internal async API: `/v1/stt/*`, `/v1/tts/*`, `/v1/jobs/*`, `/v1/capabilities`, `/v1/voices`
-  - External async provider API: `/voices`, `/tts/jobs`, `/stt/jobs`
+  - External async provider API: `/voices`, `/tts/jobs`, `/tts/jobs/{job_id}`, `/tts/jobs/{job_id}/events`, `/stt/jobs`, `/stt/jobs/{job_id}`, `/stt/jobs/{job_id}/events`
 - **`redis`**: job queue
 - **`minio`**: artifact storage (S3-compatible) + presigned `result_url`s
 - **`stt-worker`**: scaffolded worker (no engine wired yet)
@@ -28,7 +28,7 @@ docker compose up -d --build
 - MinIO S3 API: `http://localhost:9010`
 - MinIO console: `http://localhost:9011`
 - Gateway Dev UI (TTS + STT upload/mic): `http://localhost:9001/ui` (mic capture requires HTTPS or localhost)
-- Provider contract surface: `http://localhost:9001/voices`, `http://localhost:9001/tts/jobs`, `http://localhost:9001/stt/jobs`
+- Provider contract surface: `http://localhost:9001/voices`, `http://localhost:9001/tts/jobs`, `http://localhost:9001/tts/jobs/{job_id}`, `http://localhost:9001/tts/jobs/{job_id}/events`, `http://localhost:9001/stt/jobs`, `http://localhost:9001/stt/jobs/{job_id}`, `http://localhost:9001/stt/jobs/{job_id}/events`
 - Provider voice presets come from `./voices/presets/*.wav`; reference clips live under `./voices/samples/`
 
 Required secrets (no insecure defaults):
@@ -94,6 +94,12 @@ So “scaling up” is mostly:
 
 ## CI/CD
 
+- Local fast-path testing is available without GitHub Actions or a running stack.
+- Install the gateway test dependencies with `python3 -m pip install -r services/gateway/requirements.txt -r requirements-dev.txt`.
+- Run `./scripts/run-local-tests.sh` to validate `docker compose` config and execute the offline `pytest` suite.
+- Use `SKIP_COMPOSE_VALIDATE=1 ./scripts/run-local-tests.sh -k provider` when you only want the Python tests or a narrower subset.
+- Run `./scripts/run-provider-smoke.sh` for a Docker-backed provider smoke test that exercises `/voices`, async TTS/STT jobs, polling, and SSE event streams end to end.
+- Use `RUN_PROVIDER_SMOKE=1 ./scripts/run-local-tests.sh` to append the live provider smoke test after the offline suite. Add `SKIP_BUILD=1` for faster reruns against an already rebuilt stack.
 - GitHub Actions use the shared reusable workflows from [`smk762/gha-docker-shared-ci`](https://github.com/smk762/gha-docker-shared-ci) to lint Dockerfiles, validate compose, build, and scan images.
 - Configure repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Docker Hub access token). Set repository variable `DOCKERHUB_ORG` to the Docker Hub org/user used for publishing (defaults to the GitHub org/user).
 - CI runs on pull requests and pushes to `main`; release builds push images on `main` and `v*` tags for: `gateway`, `xtts`, `xtts-glue`, `tts-worker`, `whisper-worker`.
