@@ -3,7 +3,8 @@ FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 
 # hadolint ignore=DL3008
 RUN apt-get update && \

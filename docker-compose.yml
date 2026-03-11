@@ -86,6 +86,7 @@ services:
       - DEVICE=${XTTS_DEVICE:-cpu}     # cpu by default; set to cuda:0 when enabling GPU
       - NVIDIA_VISIBLE_DEVICES=${XTTS_CUDA_VISIBLE_DEVICES:-0}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
       - MODEL_DIR=/models
       - HF_HOME=/models/.cache/hf      # optional cache location
     volumes:
