@@ -78,7 +78,7 @@ services:
   xtts:
     build:
       context: ./services/xtts
-    image: xtts-api-server:0.8.0-cuda12.1
+    image: xtts-api-server:0.8.6-cuda12.4
     container_name: xtts
     restart: unless-stopped
     environment:
