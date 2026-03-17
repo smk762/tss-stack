@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, UploadFile, File, Form
 from app.core import config
 from app.core.errors import http_error
 from app.db.job_store import JobStore
+from app.metrics import observe_job_enqueued
 from app.queue.redis_queue import RedisQueue
 from app.storage.minio_store import MinioStore
 
@@ -31,6 +32,8 @@ async def transcribe(
     prompt: Optional[str] = Form(default=None),
     temperature: Optional[float] = Form(default=None),
     output_format: Optional[str] = Form(default=None),
+    familiar_id: Optional[str] = Form(default=None),
+    familiar_adapter_id: Optional[str] = Form(default=None),
     # json base64 fallback
     x_audio_b64: Optional[str] = Header(default=None, convert_underscores=False),
     x_audio_mime_type: Optional[str] = Header(default=None, convert_underscores=False),
@@ -59,6 +62,13 @@ async def transcribe(
 
     if output_format and output_format not in config.STT_OUTPUT_FORMATS:
         raise http_error(400, "invalid_request", "Invalid output_format", {"output_format": output_format, "supported": config.STT_OUTPUT_FORMATS})
+    if familiar_adapter_id and not familiar_id:
+        raise http_error(
+            400,
+            "invalid_request",
+            "familiar_id is required when familiar_adapter_id is set.",
+            {},
+        )
 
     mstore = MinioStore()
     mstore.ensure_bucket()
@@ -71,6 +81,8 @@ async def transcribe(
         "language": language,
         "prompt": prompt,
         "temperature": temperature,
+        "familiar_id": familiar_id,
+        "familiar_adapter_id": familiar_adapter_id,
     }
     
     # Add original filename if available
@@ -121,8 +133,11 @@ async def transcribe(
                 "prompt": prompt,
                 "temperature": temperature,
                 "output_format": output_format or "json",
+                "familiar_id": familiar_id,
+                "familiar_adapter_id": familiar_adapter_id,
             },
         },
     )
+    observe_job_enqueued(job_kind="stt")
 
     return {"job_id": job_id, "status_url": f"/v1/jobs/{job_id}"}

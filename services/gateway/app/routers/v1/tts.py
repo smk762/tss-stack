@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.core import config
 from app.core.errors import http_error
 from app.db.job_store import JobStore
+from app.metrics import observe_job_enqueued
 from app.queue.redis_queue import RedisQueue
 from app.storage.minio_store import MinioStore
 
@@ -55,6 +56,8 @@ class TtsSynthesizeRequest(BaseModel):
     sample_rate_hz: Optional[int] = Field(default=None, ge=8000, le=48000)
     seed: Optional[int] = None
     controls: Optional[TtsControls] = None
+    familiar_id: Optional[str] = None
+    familiar_adapter_id: Optional[str] = None
 
 
 @router.post("/tts/synthesize", status_code=202)
@@ -63,6 +66,14 @@ async def synthesize(
     idempotency_key: Optional[str] = Header(default=None, convert_underscores=False, alias="Idempotency-Key"),
     x_user_id: Optional[str] = Header(default=None, convert_underscores=False),
 ):
+    if body.familiar_adapter_id and not body.familiar_id:
+        raise http_error(
+            400,
+            "invalid_request",
+            "familiar_id is required when familiar_adapter_id is set.",
+            {},
+        )
+
     store = JobStore()
     store.init()
 
@@ -85,6 +96,7 @@ async def synthesize(
     }
     q = RedisQueue()
     await q.enqueue(config.QUEUE_TTS, payload)
+    observe_job_enqueued(job_kind="tts")
 
     return {"job_id": job_id, "status_url": f"/v1/jobs/{job_id}"}
 

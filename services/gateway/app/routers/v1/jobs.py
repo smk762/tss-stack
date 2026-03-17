@@ -93,6 +93,8 @@ async def get_job(job_id: str, x_user_id: Optional[str] = Header(default=None, c
     original_filename = None
     if params and "original_filename" in params:
         original_filename = params["original_filename"]
+    familiar_id = params.get("familiar_id") if params else None
+    familiar_adapter_id = params.get("familiar_adapter_id") if params else None
 
     response = {
         "id": row.id,
@@ -104,6 +106,8 @@ async def get_job(job_id: str, x_user_id: Optional[str] = Header(default=None, c
         "progress": row.progress,
         "error": err,
         "result": result,
+        "familiar_id": familiar_id,
+        "familiar_adapter_id": familiar_adapter_id,
     }
 
     # Add parameters if available
