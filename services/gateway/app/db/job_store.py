@@ -204,6 +204,21 @@ class JobStore:
             )
             conn.commit()
 
+    def list_terminal_jobs(self) -> list[JobRow]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE finished_at IS NOT NULL
+                  AND status IN ('succeeded', 'failed', 'cancelled')
+                  AND type IN ('tts.synthesize', 'stt.transcribe', 'whisper.transcribe')
+                ORDER BY finished_at ASC
+                """
+            )
+            rows = cur.fetchall()
+        return [self._row(row) for row in rows]
+
     def get_or_create_idempotency(self, idem_key: str, owner_id: Optional[str], job_type: str) -> Optional[str]:
         """
         Best-effort idempotency: maps a key to a job id for a short TTL window.

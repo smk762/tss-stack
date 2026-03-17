@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core import config
 from app.db.job_store import JobRow, JobStore
 from app.media import guess_mime_type, probe_duration_seconds, safe_voice_path, sniff_audio_mime, suffix_for_mime
+from app.metrics import observe_job_enqueued
 from app.queue.redis_queue import RedisQueue
 from app.storage.minio_store import MinioStore
 
@@ -607,6 +608,7 @@ async def create_tts_job(body: TTSJobCreateRequest, request: Request) -> VoiceJo
             "params": params,
         },
     )
+    observe_job_enqueued(job_kind="tts")
     if body.webhook_url:
         _track_background_task(asyncio.create_task(_notify_tts_webhook(job_id, body.webhook_url)))
     return VoiceJobAcceptedResponse(
@@ -676,6 +678,7 @@ async def create_stt_job(body: STTJobCreateRequest, request: Request) -> VoiceJo
             },
         },
     )
+    observe_job_enqueued(job_kind="stt")
     if body.webhook_url:
         _track_background_task(asyncio.create_task(_notify_stt_webhook(job_id, body.webhook_url)))
     return VoiceJobAcceptedResponse(
