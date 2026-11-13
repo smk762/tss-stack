@@ -1,5 +1,7 @@
 # Digital Familiar — task tracker
 
+> Hosts in this doc are placeholders (`<INFRA_HOST>`, `<TRAINING_HOST>`). The real host/IP is in the local `.env`; check it there.
+
 Status key: ✅ done · 🔧 in progress · ⬜ not started · ⏭ skipped
 
 Sequence and ownership in `docs/implementation-plan.md`.
@@ -182,7 +184,7 @@ LLM-based quality scoring via ollama, and structured result objects.
     "lora_weights_url": "<FamiliarAdapterVersion weights URL>",
     "prompt": "<optional override prompt>",
     "num_samples": 4,
-    "kimini_base_url": "http://192.168.1.128:8000",
+    "kimini_base_url": "http://<INFRA_HOST>:8000",
     "kimini_token": "<service-to-service JWT>"
   }
 }
@@ -229,7 +231,7 @@ LLM-based quality scoring via ollama, and structured result objects.
 - `num_samples` ∈ [1, 20]
 - `kimini_base_url` and `kimini_token` are required for step 4
 
-**Note**: kimini must set `ORCHESTRATOR_BACKEND=live` and point `ORCHESTRATOR_API_BASE_URL=http://192.168.1.128:8030`
+**Note**: kimini must set `ORCHESTRATOR_BACKEND=live` and point `ORCHESTRATOR_API_BASE_URL=http://<INFRA_HOST>:8030`
 to route `run_familiar_eval_task` through gothmog instead of executing it inline.
 
 ---
@@ -251,14 +253,14 @@ kimini, trigger eval run.
     "base_model": "flux_dev",
     "training_steps": 2000,
     "eval_prompt": "a portrait of dhounddog in natural light",
-    "kimini_base_url": "http://192.168.1.128:8000",
+    "kimini_base_url": "http://<INFRA_HOST>:8000",
     "kimini_token": "<service-to-service JWT>"
   }
 }
 ```
 
 **Graph steps**:
-1. `submit_training` — `POST http://192.168.1.138:8010/v1/lora/jobs` with training payload;
+1. `submit_training` — `POST http://<TRAINING_HOST>:8010/v1/lora/jobs` with training payload;
    poll until `status=completed`; extract `weights_url`, `provider_job_id`
 2. `register_adapter` — `POST /v1/familiars/{familiar_id}/adapters` to kimini:
    ```json
@@ -293,7 +295,7 @@ Intended to be triggered on a schedule (e.g. monthly) via kimini or an external 
   "workflow": "familiar_periodic_revalidate",
   "input": {
     "user_id": "<user UUID>",
-    "kimini_base_url": "http://192.168.1.128:8000",
+    "kimini_base_url": "http://<INFRA_HOST>:8000",
     "kimini_token": "<service-to-service JWT>"
   }
 }
@@ -311,8 +313,8 @@ Intended to be triggered on a schedule (e.g. monthly) via kimini or an external 
 
 ## `imogen` — image runtime
 
-**Host**: `192.168.1.138:8000`
-**Metrics**: `http://192.168.1.138:8000/metrics`
+**Host**: `<TRAINING_HOST>:8000`
+**Metrics**: `http://<TRAINING_HOST>:8000/metrics`
 
 imogen is the GPU image generation service used by kimini, gothmog, and the eval pipeline.
 
@@ -351,8 +353,8 @@ This metadata is stored in `FamiliarEvalRun.results_json` for traceability and c
 
 ## `loraline` — training control plane
 
-**Host**: `192.168.1.138:8010`
-**Metrics**: `http://192.168.1.138:8010/metrics`
+**Host**: `<TRAINING_HOST>:8010`
+**Metrics**: `http://<TRAINING_HOST>:8010/metrics`
 
 loraline is the LoRA training gateway used by kimini's `train_lora_task` via `LORA_API_*` config.
 
@@ -403,8 +405,8 @@ result and includes them in the `update_job_status` call that completes the `Lor
 
 ## `vidita` — video runtime
 
-**Host**: `192.168.1.138:8001`
-**Metrics**: `http://192.168.1.138:8001/metrics`
+**Host**: `<TRAINING_HOST>:8001`
+**Metrics**: `http://<TRAINING_HOST>:8001/metrics`
 
 ### ⬜ Familiar adapter metadata in job outputs
 
@@ -447,7 +449,7 @@ tss-stack needs to accept and return these fields so kimini can populate them.
 
 ## `test_dbs` — shared data layer
 
-**Host**: `192.168.1.128` · Postgres: `5432` · Redis: `6380` · MinIO: `9000` · Qdrant: `6333`
+**Host**: `<INFRA_HOST>` · Postgres: `5432` · Redis: `6380` · MinIO: `9000` · Qdrant: `6333`
 
 ### ✅ Phase 1 tables (applied)
 
@@ -479,8 +481,8 @@ gothmog familiar workflows are added to a separate priority queue.
 
 ## `sauron` — observability
 
-**Grafana**: `http://192.168.1.128:3001`
-**Prometheus**: `http://192.168.1.128:9090`
+**Grafana**: `http://<INFRA_HOST>:3001`
+**Prometheus**: `http://<INFRA_HOST>:9090`
 
 ### ⬜ Familiar pipeline dashboards
 
@@ -499,7 +501,7 @@ Add panels to an existing or new "Familiar Pipeline" dashboard in Grafana:
 **Comparisons**:
 - `hitl_comparisons_total` — cumulative count of pairwise comparisons recorded
 
-**Source**: kimini exposes Prometheus metrics at `http://192.168.1.128:8000/metrics`.
+**Source**: kimini exposes Prometheus metrics at `http://<INFRA_HOST>:8000/metrics`.
 Sauron already scrapes kimini — verify the scrape target is active and add these panel queries.
 
 ### ⬜ Alerts
